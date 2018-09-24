@@ -17,7 +17,7 @@ import kotlin.math.min
 
 object PeerDB {
     const val NETWORK_TIMEOUT = 30 * 60
-    private val db = DBMaker.fileDB("peer.db").transactionEnable().fileMmapEnable().closeOnJvmShutdown().make()
+    private val db = DBMaker.fileDB("peer.db").transactionEnable().fileMmapEnableIfSupported().closeOnJvmShutdown().make()
     private val map = db.hashMap("peers", Serializer.ELSA, Serializer.ELSA).createOrOpen()
 
     fun commit() {
@@ -51,12 +51,12 @@ object PeerDB {
     }
 
     fun getCandidate(): Address? {
-        return getRandom(1).firstOrNull() //TODO
+        return getRandom(1).firstOrNull()
     }
 
     fun getRandom(n: Int): MutableList<Address> {
-        val n = min(size(), n)
-        return map.keys.shuffled().take(n) as MutableList<Address>
+        val x = min(size(), n)
+        return getAll().shuffled().take(x).toMutableList()
     }
 
     fun add(peers: List<Address>, from: Address) {
@@ -64,6 +64,7 @@ object PeerDB {
             if (!map.contains(it))
                 map[it] = Entry(from, 0, 0, 0)
         }
+        commit()
     }
 
     class Entry(val from: Address, val attempts: Int, val lastTry: Long, val lastConnected: Long) : java.io.Serializable
