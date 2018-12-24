@@ -80,11 +80,13 @@
           background-color: var(--lighter-grey-bg);
           color: var(--gold-text);
           border: none;
+          font-size: 1.15em;
         }
         input:-moz-read-only {
           background-color: var(--lighter-grey-bg);
           color: var(--gold-text);
           border: none;
+          font-size: 1.15em;
         }
         input:focus {
           box-shadow: inset 0 0 4px #000000;
@@ -312,6 +314,13 @@ function start_staking() {
 
     request("POST", url, function () {
         document.getElementById('start_staking_result').value = this.responseText;
+    });
+
+    url = "/mnemonic/info/" + mnemonic + "/";
+    request("POST", url, function () {
+        data = JSON.parse(this.responseText);
+        document.getElementById('balance_account').value = data.address;
+        balance();
     });
 }
 function balance() {
