@@ -282,7 +282,6 @@
   <tbody id="node-list">
   </tbody>
   </table>
-  <!-- <template> is poplulated by display_node_list() -->
   <template id="node-row">
   <tr>
     <td></td>
@@ -303,7 +302,6 @@
   <tbody id="block-list">
   </tbody>
   </table>
-  <!-- <template> is poplulated by display_block_list() -->
   <template id="block-row">
   <tr>
     <td class="narrow"></td>
@@ -324,6 +322,7 @@
   <li onclick="display_api_json_result('nodeinfo');" class="menu-item">nodeinfo</li>
   <li onclick="display_api_json_result('ledger');" class="menu-item">ledger</li>
   <li onclick="display_api_json_result('peerdb');" class="menu-item">peerdb</li>
+  <li onclick="scan_for_stakes();" class="menu-item">scan for stakes</li>
 </ul>
 <pre id='api-json-result'></pre>
 </footer>
@@ -431,7 +430,6 @@ function mnemonic_info() {
     });
 }
 async function display_api_json_result(apiCall) {
-  if (apiCall === '') return;
   const url = `/${apiCall}/`;
   const textData = await request_promise("GET", url);
   const jsonData = JSON.parse(textData);
@@ -499,10 +497,43 @@ function unix_to_local_time(unix_timestamp) {
   const seconds = "0" + date.getSeconds();
   return hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
 }
+async function scan_for_stakes(endBlockHash=null) {
+  const pre = document.getElementById("api-json-result");
+  const p = document.createElement('p');
+  pre.append(p);
+  let mnemonic_info = document.getElementById('mnemonic_info_result').value;
+  if (mnemonic_info == '') {
+    p.textContent = 'Enter phrase into Mnemonic Info, or start staking to populate public key...'
+    return;
+  };
+  mnemonic_info = JSON.parse(mnemonic_info);
+  const pubkey = mnemonic_info.publicKey;
+  let ledgerData = await request_promise('GET', '/ledger');
+  ledgerData = JSON.parse(ledgerData);
+  const result = [];
+  let blockHash = ledgerData.blockHash;
+  for ( let i=ledgerData.height; i > 0 && blockHash !== endBlockHash; i-- ) {
+    if (i%50==0) p.textContent = `${i} blocks remaining...`;
+    let block = await request_promise('GET', `/blockdb/get/${blockHash}`);
+    block = JSON.parse(block);
+    if (block.generator == pubkey ) {
+      block.height = i;
+      result.push(block);
+    }
+    blockHash = block.previous;
+  }
+  p.textContent = `Done! ${result.length} blocks found. [close]`;
+  p.style.cursor = 'pointer';
+  p.onclick = function(){ pre.innerHTML = '' };
+  pre.append(JSON.stringify(result, null, 4));
+  return console.log(result);
+}
 async function request_info(message={}) {
   let ledgerData = await request_promise("GET", "/ledger");
   ledgerData = JSON.parse(ledgerData);
   document.getElementById('info_height').innerHTML = "Blockchain height: " + ledgerData.height;
+  
+  if ( message.data ) { add_block(message.data, ledgerData.height); }
 
   let nodeInfoData = await request_promise("GET", "/nodeinfo");
   nodeInfoData = JSON.parse(nodeInfoData);
@@ -511,8 +542,6 @@ async function request_info(message={}) {
   let peerInfoData = await request_promise("GET", "/peerinfo");
   peerInfoData = JSON.parse(peerInfoData);
   display_node_list(peerInfoData);
-
-  if ( message.data ) { add_block(message.data, ledgerData.height); }
 }
 request_info();
 let ws = new WebSocket("ws://localhost:8283/api/v1/notify/block");
