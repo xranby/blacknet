@@ -324,7 +324,7 @@ function balance() {
             return;
         }
         let data = JSON.parse(this.responseText)
-        document.getElementById('balance_result').value = data.balance;
+        document.getElementById('balance_result').value = (data.balance / 100000000).toFixed(8);
     });
 }
 function transfer() {
