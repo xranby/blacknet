@@ -106,7 +106,8 @@
           margin-bottom: 1rem;
         }
 
-        #node-table {
+        #node-table, #block-table {
+          table-layout: fixed;
           width: 100%;
         }
 
@@ -124,6 +125,11 @@
         tbody td {
           color: var(--grey-text);
           padding: .25rem .5rem;
+          word-wrap: break-word;
+        }
+
+        td.narrow {
+          width: 70px;
         }
 
         tr:hover {
@@ -271,7 +277,7 @@
   <table id="node-table">
   <caption>Connected Nodes</caption>
   <thead>
-  <tr><td>IP</td><td>Ping</td><td>Bytes Read</td><td>Bytes Written</td><td>In/Out</td></tr>
+  <tr><td>IP</td><td class="narrow">Ping</td><td>Bytes Read</td><td>Bytes Written</td><td class="narrow">In/Out</td></tr>
   </thead>
   <tbody id="node-list">
   </tbody>
@@ -280,9 +286,31 @@
   <template id="node-row">
   <tr>
     <td></td>
+    <td class="narrow"></td>
     <td></td>
     <td></td>
+    <td class="narrow"></td>
+  </tr>
+  </template>
+</div>
+
+<div>
+  <table id="block-table">
+  <caption>Recent Blocks</caption>
+  <thead>
+  <tr><td class="narrow">Height</td><td>Hash</td><td class="narrow">Size</td><td class="narrow">Time</td><td class="narrow">Txns</td><td>Generator</td></tr>
+  </thead>
+  <tbody id="block-list">
+  </tbody>
+  </table>
+  <!-- <template> is poplulated by display_block_list() -->
+  <template id="block-row">
+  <tr>
+    <td class="narrow"></td>
     <td></td>
+    <td class="narrow"></td>
+    <td class="narrow"></td>
+    <td class="narrow"></td>
     <td></td>
   </tr>
   </template>
@@ -301,6 +329,30 @@
 </footer>
 
 <script type="text/javascript">
+function request_promise(method, url) {
+  return new Promise( function(resolve, reject) {
+    url = "/api/v1" + url;
+    const xhr = new XMLHttpRequest();
+    xhr.open(method, url, true);
+    xhr.onload = function() {
+      if (this.status >= 200 && this.status < 300) {
+        resolve(xhr.responseText);
+      } else {
+        reject({
+          status: this.status,
+          statusText: xhr.statusText
+        });
+      }
+    };
+    xhr.onerror = function () {
+      reject({
+        status: this.status,
+        statusText: xhr.statusText
+      });
+    };
+    xhr.send();
+  });
+}
 function request(method, url, callback) {
     url = "/api/v1" + url
     let xhr = new XMLHttpRequest();
@@ -318,7 +370,9 @@ function start_staking() {
 
     url = "/mnemonic/info/" + mnemonic + "/";
     request("POST", url, function () {
-        data = JSON.parse(this.responseText);
+        const data = JSON.parse(this.responseText);
+        data.mnemonic = '[hidden]';
+        document.getElementById('mnemonic_info_result').value = JSON.stringify(data);
         document.getElementById('balance_account').value = data.address;
         balance();
     });
@@ -376,70 +430,89 @@ function mnemonic_info() {
         document.getElementById('mnemonic_info_result').value = this.responseText;
     });
 }
-function display_api_json_result(apiCall) {
+async function display_api_json_result(apiCall) {
   if (apiCall === '') return;
   const url = `/${apiCall}/`;
-  request("GET", url, function() {
-    const data = JSON.parse(this.responseText);
-    const pre = document.getElementById("api-json-result");
-    const h2 = document.createElement('h2');
-    const p = document.createElement('p');
-    pre.innerHTML = '';
-    h2.innerHTML = apiCall;
-    p.innerHTML = '[Close]';
-    p.style.cursor = 'pointer';
-    p.onclick = function(){ pre.innerHTML = '' };
-    pre.append(h2);
-    pre.append(p);
-    pre.append(this.responseText);
-    switch (apiCall) {
-      case "nodeinfo":
-        document.getElementById('info_connections').innerHTML = "Connections: " + data.outgoing + " outgoing, " + data.incoming + " incoming";
-        break;
-      case "ledger":
-        document.getElementById('info_height').innerHTML = "Blockchain height: " + data.height;
-        break;
-      case "peerinfo":
-        display_node_list(data);
-        break;
-    }
+  const textData = await request_promise("GET", url);
+  const jsonData = JSON.parse(textData);
+  const pre = document.getElementById("api-json-result");
+  const h2 = document.createElement('h2');
+  const p = document.createElement('p');
+  pre.innerHTML = '';
+  h2.innerHTML = apiCall;
+  p.innerHTML = '[Close]';
+  p.style.cursor = 'pointer';
+  p.onclick = function(){ pre.innerHTML = '' };
+  pre.append(h2);
+  pre.append(p);
+  pre.append(textData);
+  switch (apiCall) {
+    case "nodeinfo":
+      document.getElementById('info_connections').innerHTML = "Connections: " + jsonData.outgoing + " outgoing, " + jsonData.incoming + " incoming";
+      break;
+    case "ledger":
+      document.getElementById('info_height').innerHTML = "Blockchain height: " + jsonData.height;
+      break;
+    case "peerinfo":
+      display_node_list(jsonData);
+      break;
+  }
+}
+function display_node_list(data) {
+  const tbody = document.querySelector('#node-list');
+  const template = document.querySelector('#node-row');
+  tbody.innerHTML = '';
+  data.forEach( (node) => {
+    const clone = document.importNode(template.content, true);
+    const td = clone.querySelectorAll('td');
+    td[0].textContent = node.remoteAddress;
+    td[1].textContent = node.ping;
+    td[2].textContent = node.totalBytesRead;
+    td[3].textContent = node.totalBytesWritten;
+    td[4].textContent = node.state === 'INCOMING_CONNECTED' ? 'In'  : 'Out';
+    tbody.appendChild(clone);
   });
 }
-function display_node_list(data=null) {
-  if (data === null) {
-    request('GET', '/peerinfo', function() {
-      const data = JSON.parse(this.responseText);
-      createTableRows(data);
-    });
-  } else {
-    createTableRows(data);
-  }
-  function createTableRows(data){
-    const tbody = document.querySelector('#node-list');
-    const template = document.querySelector('#node-row');
-    tbody.innerHTML = '';
-    data.forEach( (node) => {
-      const clone = document.importNode(template.content, true);
-      const td = clone.querySelectorAll('td');
-      td[0].textContent = node.remoteAddress;
-      td[1].textContent = node.ping;
-      td[2].textContent = node.totalBytesRead;
-      td[3].textContent = node.totalBytesWritten;
-      td[4].textContent = node.state === 'INCOMING_CONNECTED' ? 'In'  : 'Out';
-      tbody.appendChild(clone);
-    });
-  }
+async function add_block(hash, height) {
+  const url = `/blockdb/get/${hash}`;
+  let blockData = await request_promise('GET', url);
+  blockData = JSON.parse(blockData);
+  const table = document.getElementById("block-table");
+  const rowCount = table.rows.length;
+  rowCount > 10 ? table.deleteRow(rowCount-1) : false ;
+  const tbody = document.querySelector('#block-list');
+  const template = document.querySelector('#block-row');
+  const clone = document.importNode(template.content, true);
+  const td = clone.querySelectorAll('td');
+  td[0].textContent = height;
+  td[1].textContent = hash;
+  td[2].textContent = blockData.size;
+  td[3].textContent = unix_to_local_time(blockData.time);
+  td[4].textContent = blockData.transactions.length;
+  td[5].textContent = blockData.generator;
+  tbody.prepend(clone);
 }
-function request_info() {
-    request("GET", "/ledger", function () {
-        let data = JSON.parse(this.responseText)
-        document.getElementById('info_height').innerHTML = "Blockchain height: " + data.height;
-    });
-    request("GET", "/nodeinfo", function () {
-        let data = JSON.parse(this.responseText)
-        document.getElementById('info_connections').innerHTML = "Connections: " + data.outgoing + " outgoing, " + data.incoming + " incoming";
-    });
-    display_node_list();
+function unix_to_local_time(unix_timestamp) {
+  const date = new Date(unix_timestamp*1000);
+  const hours = date.getHours();
+  const minutes = "0" + date.getMinutes();
+  const seconds = "0" + date.getSeconds();
+  return hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
+}
+async function request_info(message={}) {
+  let ledgerData = await request_promise("GET", "/ledger");
+  ledgerData = JSON.parse(ledgerData);
+  document.getElementById('info_height').innerHTML = "Blockchain height: " + ledgerData.height;
+
+  let nodeInfoData = await request_promise("GET", "/nodeinfo");
+  nodeInfoData = JSON.parse(nodeInfoData);
+  document.getElementById('info_connections').innerHTML = "Connections: " + nodeInfoData.outgoing + " outgoing, " + nodeInfoData.incoming + " incoming";
+
+  let peerInfoData = await request_promise("GET", "/peerinfo");
+  peerInfoData = JSON.parse(peerInfoData);
+  display_node_list(peerInfoData);
+
+  if ( message.data ) { add_block(message.data, ledgerData.height); }
 }
 request_info();
 let ws = new WebSocket("ws://localhost:8283/api/v1/notify/block");
