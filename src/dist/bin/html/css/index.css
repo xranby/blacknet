@@ -15,10 +15,13 @@ body {
   background-color:var(--lighter-grey-bg);
 }
 
-header, footer {
+header, .info {
   color: var(--gold-text);
   background-color: var(--darker-grey-bg);
   padding: 1rem;
+}
+.info{
+  margin-top: 3em;
 }
 
 .container {
@@ -52,7 +55,7 @@ label {
   flex-grow: 1;
 }
 
-input {
+input{
   border: 2px solid var(--darker-grey-bg);
   border-radius: 4px;
   height: 1.5em;
@@ -60,6 +63,12 @@ input {
   padding: .25rem;
   background-color: var(--grey-text);
   flex-grow: 8;
+}
+.mnemonic_info{
+  flex-grow: 8;
+  width: 80%;
+  font-size: 1em;
+  color: var(--gold-text);
 }
 input:read-only {
   background-color: var(--lighter-grey-bg);
@@ -101,6 +110,11 @@ caption {
   padding: .5rem;
   background-color: var(--darker-grey-bg);
 }
+table{
+  margin-top: 3em;
+  border: 1px solid var(--darker-grey-bg);
+  border-collapse: collapse;
+}
 
 thead td {
   color: var(--grey-text);
@@ -133,4 +147,9 @@ tr:hover {
   padding-left: 5px;
   padding-right: 5px;
   cursor: pointer;
+}
+#api-json-result{
+  background: var(--lighter-grey-bg);
+  margin-top: 1em;
+  padding: .6em;
 }

@@ -8,23 +8,24 @@
   -->
 
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" ng-app="blacknet">
 
 <head>
   <meta charset="UTF-8">
   <title>Blacknet</title>
   <link rel="stylesheet" href="css/index.css" />
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; ">
+  <script type="text/javascript" src="js/angular.min.js"></script>
+  <meta http-equiv="Content-Security-Policy" content="script-src 'self' 'unsafe-eval';default-src 'self'; ">
 </head>
 
-<body>
+<body ng-controller="appController" ng-cloak>
 
   <header>
     <h1>Blacknet</h1>
-    <p id="info_height"></p>
-    <p id="info_connections"></p>
+    <p id="info_height">Blockchain height: {{ledger.height}}</p>
+    <p id="info_connections"> Connections: {{nodeInfo.outgoing}} outgoing, {{nodeInfo.incoming}} incoming
+    </p>
   </header>
-
   <div class="container">
 
     <div>
@@ -32,110 +33,112 @@
         <legend>Start staking</legend>
         <div class="field-row">
           <label>Mnemonic</label>
-          <input type="password" id="start_staking_mnemonic">
+          <input type="password" ng-model="staking_mnemonic">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="start_staking_result" readonly>
+          <input type="text" id="start_staking_result" ng-model="start_staking_result" readonly>
         </div>
-        <button id="start_staking">Start staking</button>
+        <button id="start_staking" ng-click="startStaking()">Start staking</button>
       </fieldset>
 
       <fieldset>
         <legend>Get balance</legend>
         <div class="field-row">
           <label>Account</label>
-          <input type="text" id="balance_account">
+          <input type="text" id="balance_account" ng-model="account">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="balance_result" readonly>
+          <input type="text" id="balance_result" ng-model="balance_result" readonly>
         </div>
-        <button id="balance">Get balance</button>
+        <button id="balance" ng-click="queryBalance()">Get balance</button>
       </fieldset>
 
       <fieldset>
         <legend>Transfer</legend>
         <div class="field-row">
           <label>Mnemonic</label>
-          <input type="password" id="transfer_mnemonic">
+          <input type="password" ng-model="send_mnemonic">
         </div>
         <div class="field-row">
           <label>Fee</label>
-          <input type="text" id="transfer_fee">
+          <input type="text" ng-model="send_fee">
         </div>
         <div class="field-row">
           <label>Amount</label>
-          <input type="text" id="transfer_amount">
+          <input type="text" ng-model="send_amount">
         </div>
         <div class="field-row">
           <label>To</label>
-          <input type="text" id="transfer_to">
+          <input type="text" ng-model="send_to">
         </div>
         <div class="field-row">
           <label>Message</label>
-          <input type="text" id="transfer_message">
+          <input type="text" ng-model="send_message">
         </div>
         <div class="field-row">
           <label>Encrypted</label>
-          <input type="checkbox" id="transfer_encrypted">
+          <input type="checkbox" ng-model="send_encrypted">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="transfer_result" readonly>
+          <input type="text" ng-model="send_result" readonly>
         </div>
-        <button id="transfer">Transfer</button>
+        <button ng-click="sendMoney()">Send</button>
       </fieldset>
 
       <fieldset>
         <legend>Sign message</legend>
         <div class="field-row">
           <label>Mnemonic</label>
-          <input type="password" id="sign_mnemonic">
+          <input type="password" ng-model="sign_mnemonic">
         </div>
         <div class="field-row">
           <label>Message</label>
-          <input type="text" id="sign_message">
+          <input type="text" ng-model="sign_message">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="sign_result" readonly>
+          <input type="text" ng-model="sign_result" readonly>
         </div>
-        <button id="sign">Sign message</button>
+        <button ng-click="signMessage()">Sign message</button>
       </fieldset>
 
       <fieldset>
         <legend>Verify message</legend>
         <div class="field-row">
           <label>Account</label>
-          <input type="text" id="verify_account">
+          <input type="text" ng-model="verify_account">
         </div>
         <div class="field-row">
           <label>Signature</label>
-          <input type="text" id="verify_signature">
+          <input type="text" ng-model="verify_signature">
         </div>
         <div class="field-row">
           <label>Message</label>
-          <input type="text" id="verify_message">
+          <input type="text" ng-model="verify_message">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="verify_result" readonly>
+          <input type="text" ng-model="verify_result" readonly>
         </div>
-        <button id="verify">Verify message</button>
+        <button ng-click="verifyMessage()">Verify message</button>
       </fieldset>
 
       <fieldset>
         <legend>Mnemonic info</legend>
         <div class="field-row">
           <label>Mnemonic</label>
-          <input type="password" id="mnemonic_info">
+          <input type="password" ng-model="mnemonic_info">
         </div>
         <div class="field-row">
           <label>Result</label>
-          <input type="text" id="mnemonic_info_result" readonly>
+          <div ng-show="mnemonic_result" class="mnemonic_info">
+            Address: {{mnemonic_result.address}}<br/> PubKey: {{mnemonic_result.publicKey}}
+          </div>
         </div>
-        <button id="mnemonic_info">Mnemonic info</button>
+        <button ng-click="mnemonicInfo()">Mnemonic info</button>
       </fieldset>
     </div>
 
@@ -152,18 +155,15 @@
           </tr>
         </thead>
         <tbody id="node-list">
+          <tr ng-repeat="node in peerInfo">
+            <td class="narrow">{{node.remoteAddress}}</td>
+            <td>{{node.ping}}ms</td>
+            <td class="narrow">{{node.totalBytesRead}} bytes</td>
+            <td class="narrow">{{node.totalBytesWritten}} bytes</td>
+            <td class="narrow">{{node.state === 'INCOMING_CONNECTED' ? 'In' : 'Out'}}</td>
+          </tr>
         </tbody>
       </table>
-      <!-- <template> is poplulated by display_node_list() -->
-      <template id="node-row">
-        <tr>
-          <td></td>
-          <td class="narrow"></td>
-          <td></td>
-          <td></td>
-          <td class="narrow"></td>
-        </tr>
-      </template>
     </div>
 
     <div>
@@ -180,6 +180,14 @@
           </tr>
         </thead>
         <tbody id="block-list">
+          <tr ng-repeat="block in blocks">
+            <td class="narrow">{{block.height}}</td>
+            <td>{{block.contentHash}}</td>
+            <td class="narrow">{{block.size}}</td>
+            <td class="narrow">{{block.timeString}}</td>
+            <td class="narrow">{{block.transactions.length}}</td>
+            <td>{{block.generator}}</td>
+          </tr>
         </tbody>
       </table>
       <!-- <template> is poplulated by display_block_list() -->
@@ -194,21 +202,23 @@
         </tr>
       </template>
     </div>
-
+    <div class="info">
+      <ul id="api-menu">
+        <li ng-click="showInfo('peerInfo')" class="menu-item">peerinfo</li>
+        <li ng-click="showInfo('nodeInfo')" class="menu-item">nodeinfo</li>
+        <li ng-click="showInfo('get')" class="menu-item">ledger</li>
+        <li ng-click="showInfo('peerDB')" class="menu-item">peerdb</li>
+      </ul>
+      <pre id='api-json-result' ng-model="info">{{info|json:4}}</pre>
+    </div>
   </div>
   <!-- End container div -->
 
   <footer>
-    <ul id="api-menu">
-      <li id="display_api_json_result" data-type = "peerinfo" class="menu-item">peerinfo</li>
-      <li id="display_api_json_result" data-type = "nodeinfo" class="menu-item">nodeinfo</li>
-      <li id="display_api_json_result" data-type = "ledger" class="menu-item">ledger</li>
-      <li id="display_api_json_result" data-type = "peerdb" class="menu-item">peerdb</li>
-    </ul>
-    <pre id='api-json-result'></pre>
   </footer>
-  <script type="text/javascript" src="js/jquery-3.3.1.min.js"></script>
-  <script type="text/javascript" src="js/index.js"></script>
+
+  <script type="text/javascript" src="js/init.js"></script>
+  <script type="text/javascript" src="js/app.js"></script>
 </body>
 
 </html>
