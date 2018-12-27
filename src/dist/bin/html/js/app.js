@@ -43,8 +43,6 @@ Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
         });;
     };
 
-    $scope.sign_mnemonic = "flag announce panic practice grid afraid gauge door donkey garment frost rug"
-    $scope.sign_message = 'asdasd';
     $scope.signMessage = function () {
 
         let params = {
@@ -89,25 +87,25 @@ Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
 
         let hash = message && message.data, block;
 
-        $scope.nodeInfo = Ledger.nodeInfo();
         $scope.ledger = Ledger.get();
-        $scope.peerInfo = Ledger.peerInfo();
 
         if (!hash) return;
 
-        block = Ledger.queryBlock({ hash: hash });
-        block.height = $scope.ledger.height;
-        console.log($scope.ledger.height)
-        block.hash = hash;
-        block.timeString = unix_to_local_time(+block.time);
-        if($scope.blocks.length > 100) {
-            $scope.blocks.pop();
-        }
-        $scope.blocks = [block].concat($scope.blocks);
+        Ledger.queryBlock({ hash: hash }, function(data){
+            let block = angular.merge({}, data);
+            block.height = $scope.ledger.height;
+            block.timeString = unix_to_local_time(data.time);
+            if($scope.blocks.length > 100) {
+                $scope.blocks.pop();
+            }
+            $scope.blocks = [block].concat($scope.blocks);
+        });
+        
     }
 
     function unix_to_local_time(unix_timestamp) {
-        const date = new Date(unix_timestamp * 1000);
+        console.log(unix_timestamp)
+        const date = new Date(unix_timestamp+'' + 1000);
         const hours = date.getHours();
         const minutes = "0" + date.getMinutes();
         const seconds = "0" + date.getSeconds();
