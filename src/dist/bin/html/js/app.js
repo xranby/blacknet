@@ -1,12 +1,17 @@
 
 Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
 
+    let height = 0, blockStacks = [];
     $scope.blocks = [];
     $scope.nodeInfo = Ledger.nodeInfo();
-    $scope.ledger = Ledger.get();
     $scope.peerInfo = Ledger.peerInfo();
 
-    // start staking
+    Ledger.get(function (res) {
+        initWS();
+        $scope.ledger = res;
+        height = res.height;
+    });
+
     $scope.startStaking = function () {
 
         Stake.start({ mnemonic: $scope.staking_mnemonic }, function (res) {
@@ -16,7 +21,6 @@ Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
         });
     };
 
-    // query balance
     $scope.queryBalance = function () {
 
         Ledger.getBalance({ account: $scope.account }, function (data) {
@@ -87,32 +91,51 @@ Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
 
         let hash = message && message.data, block;
 
-        $scope.ledger = Ledger.get();
-
         if (!hash) return;
 
-        Ledger.queryBlock({ hash: hash }, function(data){
-            let block = angular.merge({}, data);
-            block.height = $scope.ledger.height;
-            block.timeString = unix_to_local_time(data.time);
-            if($scope.blocks.length > 100) {
-                $scope.blocks.pop();
-            }
-            $scope.blocks = [block].concat($scope.blocks);
-        });
-        
+        blockStacks.push(hash);
+        processBlock();
     }
 
     function unix_to_local_time(unix_timestamp) {
-        console.log(unix_timestamp)
-        const date = new Date(unix_timestamp+'' + 1000);
+        const date = new Date(+(unix_timestamp + '000'));
         const hours = date.getHours();
         const minutes = "0" + date.getMinutes();
         const seconds = "0" + date.getSeconds();
         return hours + ':' + minutes.substr(-2) + ':' + seconds.substr(-2);
     }
 
+    function initWS() {
+        let ws = new WebSocket("ws://" + location.host + "/api/v1/notify/block");
+        ws.onmessage = updateStatus;
+    }
 
-    let ws = new WebSocket("ws://" + location.host + "/api/v1/notify/block");
-    ws.onmessage = updateStatus;
+    let running = false;
+
+    function processBlock() {
+
+        let hash = blockStacks.pop();
+
+        if (!hash) {
+            running = false;
+            return;
+        }
+        if (running) return;
+
+        Ledger.queryBlock({ hash: hash }, function (data) {
+
+            height++;
+            data.height = height;
+            data.contentHash = hash;
+            data.timeString = unix_to_local_time(data.time);
+            if ($scope.blocks.length > 100) {
+                $scope.blocks.pop();
+            }
+            
+            $scope.ledger.height = height;
+            $scope.blocks = [data].concat($scope.blocks);
+            processBlock();
+        });
+    }
+
 });
