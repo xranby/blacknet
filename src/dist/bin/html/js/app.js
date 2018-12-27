@@ -114,7 +114,7 @@ Blacknet.controller('appController', function ($scope, Ledger, Account, Stake) {
 
     function processBlock() {
 
-        let hash = blockStacks.pop();
+        let hash = blockStacks.shift();
 
         if (!hash) {
             running = false;
