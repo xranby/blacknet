@@ -230,6 +230,16 @@ object Node : CoroutineScope {
         bytes.release()
     }
 
+    private suspend fun isConnectedToRemoteAddress(remoteAddress: Address): Boolean {
+        var result = false
+        connections.forEach { connection ->
+            if(connection.remoteAddress.bytes == remoteAddress.bytes){
+                result = true
+            }
+        }
+        return result
+    }
+
     private suspend fun listener(server: ServerSocket) {
         while (true) {
             val socket = server.accept()
@@ -240,6 +250,13 @@ object Node : CoroutineScope {
                 continue
             }
             val localAddress = Network.address(socket.localAddress as InetSocketAddress)
+
+            // Prevent multiple connections from one remoteAddress
+            if(isConnectedToRemoteAddress(remoteAddress)){
+                socket.close()
+                continue
+            }
+
             if (!localAddress.isLocal())
                 listenAddress.add(localAddress)
             val connection = Connection(socket.openReadChannel(), socket.openWriteChannel(true), remoteAddress, localAddress, Connection.State.INCOMING_WAITING)
@@ -256,6 +273,14 @@ object Node : CoroutineScope {
                 c.writeChannel.close()
                 continue
             }
+
+            // Prevent multiple connections from one remoteAddress
+            if(isConnectedToRemoteAddress(c.remoteAddress)){
+                c.readChannel.cancel()
+                c.writeChannel.close()
+                continue
+            }
+
             val connection = Connection(c.readChannel, c.writeChannel, c.remoteAddress, I2PSAM.localAddress!!, Connection.State.INCOMING_WAITING)
             connections.add(connection)
         }
