@@ -12,6 +12,8 @@ package ninja.blacknet.network
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
 import ninja.blacknet.core.Block
 import ninja.blacknet.core.DataDB.Status
@@ -36,6 +38,7 @@ object ChainFetcher : CoroutineScope {
     private var rollbackTo: Hash? = null
     private var undoDifficulty = BigInt.ZERO
     private var undoRollack: ArrayList<Hash>? = null
+    private val mutex: Mutex = Mutex()
 
     init {
         launch { fetcher() }
@@ -51,16 +54,23 @@ object ChainFetcher : CoroutineScope {
 
     private suspend fun fetcher() {
         while (true) {
-            if (syncChain != null) {
+
+            if (isSynchronizing()) {
                 if (Node.time() <= requestTime + Node.NETWORK_TIMEOUT) {
                     delay(TIMEOUT)
                     continue
                 }
+                mutex.withLock {
+                    // re-check if isSynchronizing, it may have changed since after we acquired the lock
+                    if (isSynchronizing()) {
+                        logger.info("Disconnecting on timeout ${syncChain!!.connection.remoteAddress}")
 
-                logger.info("Disconnecting on timeout ${syncChain!!.connection.remoteAddress}")
-                syncChain!!.connection.close()
-                fetched()
+                        syncChain!!.connection.close()
+                        fetched()
+                    }
+                }
             }
+
 
             val data = selectChain()
             if (data == null) {
@@ -73,10 +83,12 @@ object ChainFetcher : CoroutineScope {
             if (!BlockDB.isInteresting(data.chain))
                 continue
 
-            logger.info("Fetching ${data.chain} from ${data.connection.remoteAddress}")
-            requestTime = Node.time()
-            syncChain = data
-            data.connection.sendPacket(GetBlocks(LedgerDB.blockHash(), LedgerDB.getRollingCheckpoint()))
+            mutex.withLock {
+                logger.info("Fetching ${data.chain} from ${data.connection.remoteAddress}")
+                requestTime = Node.time()
+                syncChain = data
+                data.connection.sendPacket(GetBlocks(LedgerDB.blockHash(), LedgerDB.getRollingCheckpoint()))
+            }
         }
     }
 
@@ -111,60 +123,62 @@ object ChainFetcher : CoroutineScope {
     }
 
     suspend fun fetched(connection: Connection, hashes: ArrayList<Hash>, blocks: ArrayList<SerializableByteArray>) {
-        if (syncChain == null || syncChain!!.connection != connection) {
-            logger.info("Unexpected synchronization. Disconnecting ${connection.remoteAddress}")
-            connection.close()
-            return
-        }
-        if (!hashes.isEmpty()) {
-            if (rollbackTo != null) {
-                logger.info("Unexpected rollback. Disconnecting ${connection.remoteAddress}")
+        mutex.withLock {
+            if (syncChain == null || syncChain!!.connection != connection) {
+                logger.info("Unexpected synchronization. Disconnecting ${connection.remoteAddress}")
+                connection.close()
+                return
+            }
+            if (!hashes.isEmpty()) {
+                if (rollbackTo != null) {
+                    logger.info("Unexpected rollback. Disconnecting ${connection.remoteAddress}")
+                    connection.close()
+                    fetched()
+                    return
+                }
+                val checkpoint = LedgerDB.getRollingCheckpoint()
+                var prev = checkpoint
+                for (hash in hashes) {
+                    if (LedgerDB.getBlockNumber(hash) == null)
+                        break
+                    prev = hash
+                }
+                requestTime = Node.time()
+                rollbackTo = prev
+                connection.sendPacket(GetBlocks(prev, checkpoint))
+                return
+            }
+            if (blocks.isEmpty()) {
+                logger.info("No blocks. Disconnecting ${connection.remoteAddress}")
                 connection.close()
                 fetched()
                 return
             }
-            val checkpoint = LedgerDB.getRollingCheckpoint()
-            var prev = checkpoint
-            for (hash in hashes) {
-                if (LedgerDB.getBlockNumber(hash) == null)
-                    break
-                prev = hash
+            if (rollbackTo != null && undoRollack == null) {
+                undoDifficulty = LedgerDB.cumulativeDifficulty()
+                undoRollack = LedgerDB.rollbackTo(rollbackTo!!)
+                logger.info("Disconnected ${undoRollack!!.size} blocks")
+                LedgerDB.commit()
             }
-            requestTime = Node.time()
-            rollbackTo = prev
-            connection.sendPacket(GetBlocks(prev, checkpoint))
-            return
-        }
-        if (blocks.isEmpty()) {
-            logger.info("No blocks. Disconnecting ${connection.remoteAddress}")
-            connection.close()
-            fetched()
-            return
-        }
-        if (rollbackTo != null && undoRollack == null) {
-            undoDifficulty = LedgerDB.cumulativeDifficulty()
-            undoRollack = LedgerDB.rollbackTo(rollbackTo!!)
-            logger.info("Disconnected ${undoRollack!!.size} blocks")
-            LedgerDB.commit()
-        }
-        for (i in blocks) {
-            val hash = Block.Hasher(i.array)
-            val status = BlockDB.process(hash, i.array, null)
-            if (status != Status.ACCEPTED) {
-                logger.info("$status block $hash Disconnecting ${connection.remoteAddress}")
-                connection.close()
-                fetched()
-                return
+            for (i in blocks) {
+                val hash = Block.Hasher(i.array)
+                val status = BlockDB.process(hash, i.array, null)
+                if (status != Status.ACCEPTED) {
+                    logger.info("$status block $hash Disconnecting ${connection.remoteAddress}")
+                    connection.close()
+                    fetched()
+                    return
+                }
             }
-        }
-        if (syncChain!!.chain == LedgerDB.blockHash()) {
-            fetched()
-        } else {
-            if (syncChain!!.cumulativeDifficulty() == BigInt.ZERO
-                    || syncChain!!.cumulativeDifficulty() > LedgerDB.cumulativeDifficulty())
-                requestBlocks()
-            else
+            if (syncChain!!.chain == LedgerDB.blockHash()) {
                 fetched()
+            } else {
+                if (syncChain!!.cumulativeDifficulty() == BigInt.ZERO
+                        || syncChain!!.cumulativeDifficulty() > LedgerDB.cumulativeDifficulty())
+                    requestBlocks()
+                else
+                    fetched()
+            }
         }
     }
 
