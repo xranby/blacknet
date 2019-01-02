@@ -161,6 +161,9 @@ object ChainFetcher : CoroutineScope {
                 LedgerDB.commit()
             }
             for (i in blocks) {
+                // prevent slow nodes to Disconnect on timeout while verifying many blocks
+                requestTime = Node.time()
+
                 val hash = Block.Hasher(i.array)
                 val status = BlockDB.process(hash, i.array, null)
                 if (status != Status.ACCEPTED) {
