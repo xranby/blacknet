@@ -37,6 +37,10 @@ class Address(
         return network.isPrivate(this)
     }
 
+    fun isEnabled(): Boolean {
+        return network.isEnabled()
+    }
+
     fun getAddressString(): String {
         return network.getAddressString(this)
     }

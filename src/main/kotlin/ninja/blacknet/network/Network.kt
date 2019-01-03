@@ -70,6 +70,10 @@ enum class Network(val addrSize: Int) {
         }
     }
 
+    fun isEnabled(): Boolean {
+        return !Config.isDisabled(this)
+    }
+
     private fun isLocalIPv4(bytes: ByteArray): Boolean {
         return bytes[0] == 0.toByte() || bytes[0] == 127.toByte()
     }
