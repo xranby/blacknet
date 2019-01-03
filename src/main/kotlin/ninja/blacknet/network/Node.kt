@@ -172,6 +172,7 @@ object Node : CoroutineScope {
     }
 
     suspend fun connectTo(address: Address) {
+        logger.info("Connecting to $address")
         val connection = Network.connect(address)
         connections.add(connection)
         sendVersion(connection)
@@ -321,9 +322,11 @@ object Node : CoroutineScope {
             PeerDB.attempt(address)
             PeerDB.commit()
 
-            try {
-                connectTo(address)
-            } catch (e: Throwable) {
+            launch {
+                try {
+                    connectTo(address)
+                } catch (e: Throwable) {
+                }
             }
 
             delay(NETWORK_TIMEOUT) //TODO
