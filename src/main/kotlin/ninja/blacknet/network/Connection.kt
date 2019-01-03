@@ -70,7 +70,10 @@ class Connection(
                     dos("deserialization failed")
                     continue
                 }
-                packet.process(this)
+                val connection = this
+                launch {
+                    packet.process(connection)
+                }
             }
         } catch (e: ClosedReceiveChannelException) {
         } catch (e: CancellationException) {
