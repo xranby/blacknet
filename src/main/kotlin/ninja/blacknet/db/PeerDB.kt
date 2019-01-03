@@ -68,7 +68,7 @@ object PeerDB {
     }
 
     fun getCandidate(filter: List<Address>): Address? {
-        val candidates = map.keys.filter { !filter.contains(it) }
+        val candidates = map.keys.filter { !filter.contains(it) && it.isEnabled() }
         if (candidates.isEmpty())
             return null
         return candidates[Random.nextInt(candidates.size)]
