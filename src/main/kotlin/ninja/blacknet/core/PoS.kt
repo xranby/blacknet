@@ -62,6 +62,9 @@ object PoS {
 
         while (true) {
             delay(1)
+            
+            if (Node.isOffline())
+                continue
 
             if (Node.isSynchronizing())
                 continue
