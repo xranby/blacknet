@@ -33,6 +33,7 @@ object ChainFetcher : CoroutineScope {
     override val coroutineContext: CoroutineContext = Dispatchers.Default
     const val TIMEOUT = 5
     private val chains = SynchronizedArrayList<ChainData>()
+    @Volatile
     private var requestTime = 0L
     @Volatile
     private var disconnected: ChainData? = null
@@ -178,6 +179,8 @@ object ChainFetcher : CoroutineScope {
             LedgerDB.commit()
         }
         for (i in blocks) {
+            // Prevent fetcer to timeout and close the connection when users machine is slow on verifying blocks
+            requestTime = Node.time()
             val hash = Block.Hasher(i.array)
             if (undoRollback?.contains(hash) == true) {
                 logger.info("Rollback contains $hash")
