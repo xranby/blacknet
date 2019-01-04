@@ -12,6 +12,8 @@ package ninja.blacknet.network
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
 import ninja.blacknet.core.Block
 import ninja.blacknet.core.DataDB.Status
@@ -39,6 +41,7 @@ object ChainFetcher : CoroutineScope {
     private var rollbackTo: Hash? = null
     private var undoDifficulty = BigInt.ZERO
     private var undoRollback: ArrayList<Hash>? = null
+    private val mutex: Mutex = Mutex()
 
     init {
         launch { fetcher() }
@@ -66,15 +69,20 @@ object ChainFetcher : CoroutineScope {
             else
                 disconnected = null
 
-            if (syncChain != null) {
+            if (isSynchronizing()) {
                 if (Node.time() <= requestTime + Node.NETWORK_TIMEOUT) {
                     delay(TIMEOUT)
                     continue
                 }
 
-                logger.info("Disconnecting on timeout ${syncChain!!.connection.remoteAddress}")
-                syncChain!!.connection.close()
-                fetched()
+                mutex.withLock { // Prevent fetcher to null syncChain while fetched is working on it
+                    // re-check if isSynchronizing, it may have changed since after we acquired the lock
+                    if (isSynchronizing()) {
+                        logger.info("Disconnecting on timeout ${syncChain!!.connection.remoteAddress}")
+                        syncChain!!.connection.close()
+                        fetched()
+                    }
+                }
             }
 
             val data = selectChain()
@@ -88,9 +96,11 @@ object ChainFetcher : CoroutineScope {
             if (!BlockDB.isInteresting(data.chain))
                 continue
 
-            logger.info("Fetching ${data.chain} from ${data.connection.remoteAddress}")
-            requestTime = Node.time()
-            syncChain = data
+            mutex.withLock { // Prevent fetcher to change syncChain while fetched is working on it
+                logger.info("Fetching ${data.chain} from ${data.connection.remoteAddress}")
+                requestTime = Node.time()
+                syncChain = data
+            }
             data.connection.sendPacket(GetBlocks(LedgerDB.blockHash(), LedgerDB.getRollingCheckpoint()))
         }
     }
@@ -130,6 +140,7 @@ object ChainFetcher : CoroutineScope {
     }
 
     suspend fun fetched(connection: Connection, hashes: ArrayList<Hash>, blocks: ArrayList<SerializableByteArray>) {
+        mutex.withLock { // Prevent fetcher to change syncChain while fetched is working on it
         if (syncChain == null || syncChain!!.connection != connection) {
             logger.info("Unexpected synchronization. Disconnecting ${connection.remoteAddress}")
             connection.close()
@@ -190,6 +201,7 @@ object ChainFetcher : CoroutineScope {
                 requestBlocks()
             else
                 fetched()
+        }
         }
     }
 
