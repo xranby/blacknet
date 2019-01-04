@@ -147,6 +147,8 @@ object Node : CoroutineScope {
     }
 
     fun listenOnTor() {
+        if (Config.isDisabled(Network.TORv2) && Config.isDisabled(Network.TORv3))
+            return
         launch {
             val address = Network.listenOnTor()
             if (address != null) {
@@ -157,6 +159,8 @@ object Node : CoroutineScope {
     }
 
     fun listenOnI2P() {
+        if (Config.isDisabled(Network.I2P))
+            return
         launch {
             val address = Network.listenOnI2P()
             if (address != null) {
