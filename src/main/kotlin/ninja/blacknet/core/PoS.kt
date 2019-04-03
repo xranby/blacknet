@@ -22,6 +22,8 @@ import ninja.blacknet.util.delay
 
 private val logger = KotlinLogging.logger {}
 
+private var account = "" 
+
 object PoS {
     fun reward(supply: Long): Long {
         val blocks = 365 * 24 * 60 * 60 / TARGET_BLOCK_TIME
@@ -54,6 +56,14 @@ object PoS {
 
     fun cumulativeDifficulty(cumulativeDifficulty: BigInt, difficulty: BigInt): BigInt {
         return cumulativeDifficulty + ONE_SHL_256 / difficulty
+    }
+
+    fun getState(): Boolean{
+        return account != ""
+    }
+
+    fun getAccount(): String{
+        return account
     }
 
     private val stakers = SynchronizedHashMap<PublicKey, Job>()
@@ -94,11 +104,13 @@ object PoS {
                 }
             }
         }
-
+        
         if (stakers.putIfAbsent(publicKey, job) != null) {
             logger.info("${Address.encode(publicKey)} is already staking")
             return false
         }
+
+        account = Address.encode(publicKey)
 
         return job.start()
     }

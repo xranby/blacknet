@@ -170,6 +170,10 @@ fun Application.main() {
             call.respond(Json.indented.stringify(TxPoolInfo.serializer(), TxPoolInfo.get()))
         }
 
+        get("/api/v1/pos") {
+            call.respond(Json.indented.stringify(PoSInfo.serializer(), PoSInfo.get()))
+        }
+
         get("/api/v1/account/generate") {
             call.respond(Json.indented.stringify(MnemonicInfo.serializer(), MnemonicInfo.new()))
         }
