@@ -23,6 +23,7 @@ import ninja.blacknet.util.byteArrayOfInts
 import ninja.blacknet.util.delay
 
 private val logger = KotlinLogging.logger {}
+private var account = "" 
 
 object PoS {
     fun reward(supply: Long): Long {
@@ -56,6 +57,14 @@ object PoS {
 
     fun cumulativeDifficulty(cumulativeDifficulty: BigInt, difficulty: BigInt): BigInt {
         return cumulativeDifficulty + ONE_SHL_256 / difficulty
+    }
+    
+    fun getState(): Boolean{
+        return account != ""
+    }
+
+    fun getAccount(): String{
+        return account
     }
 
     private val stakers = SynchronizedArrayList<Pair<PrivateKey, PublicKey>>()
@@ -114,6 +123,7 @@ object PoS {
             return false
         }
 
+        account = Address.encode(publicKey)
         stakers.list.add(pair)
         if (stakers.list.size == 1)
             job = Node.launch { staker() }
