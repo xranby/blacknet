@@ -369,7 +369,8 @@ void function () {
                     <td class="narrow" data-i18n="Time">${Blacknet.unix_to_local_time(tx.time)}</td>
                     <td class="narrow" data-i18n="Type">${type}</td>
                     <td class="left" data-i18n="Account">${txaccount}</td>
-                    <td class="right" data-i18n="Amount">${amount} <span class="strong">BLN</span></td>
+                    <td class="right" data-i18n="Amount"><span class="strong">${amount} BLN</span></td>
+                    <td class="left message" data-i18n="Message"><p>${tx.data.message.message}</p></td>
                 </tr>`;
         $(tmpl).appendTo('#tx-list')
     };

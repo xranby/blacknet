@@ -298,6 +298,8 @@ tbody td {
     font-size: 14px;
     border-bottom: 1px solid #5B5B5B;
     height: 24px;
+    line-height: 24px;
+    vertical-align: top;
 }
 
 table td.right {
@@ -307,8 +309,10 @@ table td.left{
     text-align: left;
 }
 
-tr:hover {
-    /* background-color: var(--darker-grey-bg); */
+td.message p{
+    max-width: 200px;
+    font-size: 12px;
+    line-height: 16px;
 }
 
 .mask {
