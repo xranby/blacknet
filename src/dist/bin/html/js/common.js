@@ -370,9 +370,13 @@ void function () {
                     <td class="narrow" data-i18n="Type">${type}</td>
                     <td class="left" data-i18n="Account">${txaccount}</td>
                     <td class="right" data-i18n="Amount"><span class="strong">${amount} BLN</span></td>
-                    <td class="left message" data-i18n="Message"><p>${tx.data.message.message}</p></td>
+                    <td class="left message" data-i18n="Message"><p></p></td>
                 </tr>`;
-        $(tmpl).appendTo('#tx-list')
+        let node = $(tmpl);
+        if(tx.data.message){
+            node.find('.message p').text(tx.data.message.message);
+        }
+        node.appendTo('#tx-list')
     };
 
 
