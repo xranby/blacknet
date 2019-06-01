@@ -286,7 +286,7 @@ fun Application.APIServer() {
             val blockHash = call.parameters["blockHash"]?.let { Hash.fromString(it) ?: return@post call.respond(HttpStatusCode.BadRequest, "invalid blockHash") }
 
             APIServer.txMutex.withLock {
-                val seq = TxPool.getSequence(from)
+                val seq = WalletDB.getSequence(from)
                 val data = Transfer(amount, to, message).serialize()
                 val tx = Transaction.create(from, seq, blockHash, fee, TxType.Transfer.type, data)
                 val signed = tx.sign(privateKey)
@@ -307,7 +307,7 @@ fun Application.APIServer() {
             val blockHash = call.parameters["blockHash"]?.let { Hash.fromString(it) ?: return@post call.respond(HttpStatusCode.BadRequest, "invalid blockHash") }
 
             APIServer.txMutex.withLock {
-                val seq = TxPool.getSequence(from)
+                val seq = WalletDB.getSequence(from)
                 val data = Burn(amount, message).serialize()
                 val tx = Transaction.create(from, seq, blockHash, fee, TxType.Burn.type, data)
                 val signed = tx.sign(privateKey)
@@ -328,7 +328,7 @@ fun Application.APIServer() {
             val blockHash = call.parameters["blockHash"]?.let { Hash.fromString(it) ?: return@post call.respond(HttpStatusCode.BadRequest, "invalid blockHash") }
 
             APIServer.txMutex.withLock {
-                val seq = TxPool.getSequence(from)
+                val seq = WalletDB.getSequence(from)
                 val data = Lease(amount, to).serialize()
                 val tx = Transaction.create(from, seq, blockHash, fee, TxType.Lease.type, data)
                 val signed = tx.sign(privateKey)
@@ -350,7 +350,7 @@ fun Application.APIServer() {
             val blockHash = call.parameters["blockHash"]?.let { Hash.fromString(it) ?: return@post call.respond(HttpStatusCode.BadRequest, "invalid blockHash") }
 
             APIServer.txMutex.withLock {
-                val seq = TxPool.getSequence(from)
+                val seq = WalletDB.getSequence(from)
                 val data = CancelLease(amount, to, height).serialize()
                 val tx = Transaction.create(from, seq, blockHash, fee, TxType.CancelLease.type, data)
                 val signed = tx.sign(privateKey)
@@ -465,6 +465,12 @@ fun Application.APIServer() {
             val publicKey = Address.decode(call.parameters["address"]) ?: return@get call.respond(HttpStatusCode.BadRequest, "invalid address")
 
             call.respond(Json.stringify(AccountState.Lease.serializer().list, WalletDB.getOutLeases(publicKey)))
+        }
+
+        get("/api/v1/walletdb/getsequence/{address}") {
+            val publicKey = Address.decode(call.parameters["address"]) ?: return@get call.respond(HttpStatusCode.BadRequest, "invalid address")
+
+            call.respond(WalletDB.getSequence(publicKey).toString())
         }
 
         get("/api/v1/walletdb/gettransaction/{hash}/{raw?}") {

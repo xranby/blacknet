@@ -40,9 +40,14 @@ void function () {
         } else {
             dialogAccount.find('.spinner').hide();
             dialogAccount.find('.account-input').show();
-            dialogAccount.find('.enter').unbind().on('click', function () {
+            dialogAccount.find('.enter').unbind().on('click', async function () {
 
                 let account = dialogAccount.find('.account_text').val();
+
+                if (!account) {
+                    let mnemonic = dialogAccount.find('.mnemonic_text').val();
+                    account = await Blacknet.mnemonicToAddress(mnemonic);
+                }
 
                 if (/^blacknet[a-z0-9]{59}$/.test(account)) {
                     localStorage.account = account;
@@ -52,6 +57,13 @@ void function () {
                 }
             });
         }
+    };
+
+    Blacknet.mnemonicToAddress = async function (mnemonic) {
+        let url = "/mnemonic/info/" + mnemonic + "/";
+        let mnemonicInfo = await Blacknet.postPromise(url).fail(function () { alert('Invalid Mnemonic'); });
+        mnemonicInfo = JSON.parse(mnemonicInfo);
+        return mnemonicInfo.address;
     };
 
     Blacknet.balance = async function () {

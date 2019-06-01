@@ -21,7 +21,6 @@ import kotlinx.io.IOException
 import kotlinx.io.core.ByteReadPacket
 import mu.KotlinLogging
 import ninja.blacknet.core.DataType
-import ninja.blacknet.crypto.Hash
 import ninja.blacknet.serialization.BinaryDecoder
 import ninja.blacknet.util.SynchronizedArrayList
 import java.util.concurrent.atomic.AtomicBoolean
@@ -108,7 +107,9 @@ class Connection(
         val size = readChannel.readInt()
         totalBytesRead += 4
         if (size > Node.getMaxPacketSize()) {
-            logger.info("Too long packet $size max ${Node.getMaxPacketSize()} Disconnecting $remoteAddress")
+            if (state.isConnected()) {
+                logger.info("Too long packet $size max ${Node.getMaxPacketSize()} Disconnecting $remoteAddress")
+            }
             close()
         }
         val result = readChannel.readPacket(size)

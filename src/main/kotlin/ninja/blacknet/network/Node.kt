@@ -259,7 +259,7 @@ object Node : CoroutineScope {
         }
     }
 
-    suspend fun broadcastInv(unfiltered: UnfilteredInvList, source: Connection) {
+    suspend fun broadcastInv(unfiltered: UnfilteredInvList, source: Connection? = null) {
         val invs = unfiltered.map { Pair(it.first, it.second) }
         val toSend = InvList(invs.size)
         connections.forEach {

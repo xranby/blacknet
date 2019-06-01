@@ -102,11 +102,15 @@ object LedgerDB {
         state.supply = supply
         batch.put(STATE_KEY, state.serialize())
 
+        setVersion(batch)
+
+        batch.write()
+    }
+
+    private fun setVersion(batch: LevelDB.WriteBatch) {
         val version = BinaryEncoder()
         version.packInt(VERSION)
         batch.put(VERSION_KEY, version.toBytes())
-
-        batch.write()
     }
 
     init {
@@ -522,6 +526,7 @@ object LedgerDB {
                 batch.delete(entry.key)
             }
         }
+        iterator.close()
         batch.write()
 
         blockSizes.clear()
