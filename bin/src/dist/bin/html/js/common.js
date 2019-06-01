@@ -40,49 +40,29 @@ void function () {
         } else {
             dialogAccount.find('.spinner').hide();
             dialogAccount.find('.account-input').show();
-            dialogAccount.find('.enter').unbind().on('click', async function () {
+            dialogAccount.find('.enter').unbind().on('click', function () {
 
                 let account = dialogAccount.find('.account_text').val();
 
-                if(account.length < 22){
-                    return;
-                }
                 if (/^blacknet[a-z0-9]{59}$/.test(account)) {
                     localStorage.account = account;
+                    location.reload();
                 } else {
-                    account = await Blacknet.mnemonicToAddress(account);
-                    localStorage.account = account;
+                    alert('Invalid Account');
                 }
-                location.reload();
             });
         }
     };
 
-    Blacknet.mnemonicToAddress = async function (mnemonic) {
-        let url = "/mnemonic/info/" + mnemonic + "/";
-        let mnemonicInfo = await Blacknet.postPromise(url, true);
-        mnemonicInfo = JSON.parse(mnemonicInfo);
-        return mnemonicInfo.address;
-    };
-
     Blacknet.balance = async function () {
 
-        let balance = $('.overview_balance'),
-            confirmedBalance = $('.overview_confirmed_balance'),
-            stakingBalance = $('.overview_staking_balance');;
+        let balance = $('.overview_balance');
 
         $.getJSON(apiVersion + '/ledger/get/' + account + '/', function (data) {
-            balance.html(Blacknet.toBLNString(data.balance));
-            confirmedBalance.html(Blacknet.toBLNString(data.confirmedBalance));
-            stakingBalance.html(Blacknet.toBLNString(data.stakingBalance));
-
+            balance.html(new BigNumber(data.balance).dividedBy(1e8) + ' BLN');
         }).fail(function () {
             balance.html('0.00000000 BLN');
         });
-    };
-
-    Blacknet.toBLNString = function (number) {
-        return new BigNumber(number).dividedBy(1e8).toFixed(8) + ' BLN';
     };
 
 
@@ -179,10 +159,8 @@ void function () {
         return $.post(apiVersion + url, {}, callback, type);
     };
 
-    Blacknet.postPromise = function (url, isNeedAlert) {
-        return $.post(apiVersion + url, {}).fail(function (res) { 
-            if (isNeedAlert && res.responseText) alert(res.responseText); 
-        });
+    Blacknet.postPromise = function (url) {
+        return $.post(apiVersion + url, {});
     };
 
     Blacknet.sendMoney = function (mnemonic, amount, to, message, encrypted, callback) {
@@ -321,19 +299,18 @@ void function () {
         Blacknet.renderLeaseOption(array);
     };
 
-    Blacknet.renderLeaseOption = async function (txns) {
+    Blacknet.renderLeaseOption = function (txns) {
 
+        let leaseTxns, accounts = [], aobj = {}, hobj = {}, height = [];
 
-        let outLeases = await Blacknet.getPromise('/walletdb/getoutleases/' + account, 'json');
+        leaseTxns = txns.filter(function (tx) {
+            return tx.type == 2;
+        });
 
+        if (leaseTxns.length == 0) return;
 
-
-        let accounts = [], aobj = {}, hobj = {}, height = [];
-
-        if (outLeases.length == 0) return;
-
-        outLeases.map(function (tx) {
-            aobj[tx.publicKey] = '';
+        leaseTxns.map(function (tx) {
+            aobj[tx.data.to] = '';
             hobj[tx.height] = '';
         });
 
@@ -382,14 +359,9 @@ void function () {
                     <td class="narrow" data-i18n="Time">${Blacknet.unix_to_local_time(tx.time)}</td>
                     <td class="narrow" data-i18n="Type">${type}</td>
                     <td class="left" data-i18n="Account">${txaccount}</td>
-                    <td class="right" data-i18n="Amount"><span class="strong">${amount} BLN</span></td>
-                    <td class="left message" data-i18n="Message"><p></p></td>
+                    <td class="right" data-i18n="Amount">${amount} <span class="strong">BLN</span></td>
                 </tr>`;
-        let node = $(tmpl);
-        if (tx.data.message) {
-            node.find('.message p').text(tx.data.message.message);
-        }
-        node.appendTo('#tx-list')
+        $(tmpl).appendTo('#tx-list')
     };
 
 

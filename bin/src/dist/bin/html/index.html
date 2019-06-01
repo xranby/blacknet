@@ -45,12 +45,13 @@
                       <li><a href="#" data-index="peerinfo" data-i18n="peers">Peers</a></li>
                       <li><a href="#" data-index="recentblocks" data-i18n="recent blocks">Recent Blocks</a></li>
                       <li><a href="#" data-index="info" data-i18n="mnemonic info">Mnemonic info</a></li>
+                      <!-- <li><a href="#" data-index="txpool">Tx Pool</a></li> -->
                   </ul>
               </div>
           </div>
           <div class="rightpanel">
               <div class="overview">
-                  <h3 data-i18n="Wallet Info">Wallet Info</h3>
+                  <h3>Wallet Info</h3>
                   <table>
                       <tbody>
                           <tr>
@@ -64,17 +65,9 @@
                               <td data-i18n="balance">Balance</td>
                               <td class="overview_balance strong">0.0000 BLN</td>
                           </tr>
-                          <tr>
-                              <td data-i18n="Confirmed Balance">Confirmed Balance</td>
-                              <td class="overview_confirmed_balance strong">0.0000 BLN</td>
-                          </tr>
-                          <tr>
-                              <td data-i18n="Staking Balance">Staking Balance</td>
-                              <td class="overview_staking_balance strong">0.0000 BLN</td>
-                          </tr>
                       </tbody>
                   </table>
-                  <h3 data-i18n="Node Info">Node Info</h3>
+                  <h3>Node Info</h3>
                   <table>
                       <tbody>
                           <tr>
@@ -152,11 +145,10 @@
                               <td class="left" data-i18n="Type">Type</td>
                               <td class="left" data-i18n="Account">Account</td>
                               <td class="left" data-i18n="Amount">Amount</td>
-                              <td class="left" data-i18n="Message">Message</td>
                           </tr>
                       </thead>
                       <tbody id="tx-list">
-                          <tr><td colspan="5">loading...</td></tr>
+                          <tr><td colspan="4">loading...</td></tr>
                       </tbody>
                   </table>
               </div>
@@ -407,13 +399,13 @@
                   <div class="rect5"></div>
               </div>
               <p class="account-input">
-                  <input type="password" class='account_text' placeholder="Your account or mnemonic...">
-              </p>
+                  <input type="text" class='account_text'
+                      placeholder="Your Account..."></p>
           </div>
           <div class="account-input">
               <button class="enter" data-i18n="Enter">Enter</button><br>
               <br>
-              <a href="#" id="newAccount" data-i18n="create account"> (DON'T HAVE AN ACCOUNT? CLICK HERE TO CREATE ONE!)</a>
+              <a href="#" id="newAccount"> (DON'T HAVE AN ACCOUNT? CLICK HERE TO CREATE ONE!)</a>
           </div>
       </div>
       <div class="dialog newaccount">
@@ -436,7 +428,7 @@
               </fieldset>
               <div id="confirm_mnemonic_warning_container">
                   <input type="checkbox" id="confirm_mnemonic_warning" value="0"> <span></span>
-                  <label for="confirm_mnemonic_warning" data-i18n="promise of save mnemonic">I will not forget my mnemonic and I will never disclose it</label>
+                  <label for="confirm_mnemonic_warning">I will not forget my mnemonic and I will never disclose it</label>
               </div>
               <button id="new_account_next_step" data-i18n="Next">Next</button>
           </div>
