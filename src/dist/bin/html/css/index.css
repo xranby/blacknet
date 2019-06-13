@@ -250,6 +250,10 @@ fieldset button, .staking button{
     color: var(--gold-text);
     background-color: var(--darker-grey-bg);
     border: none;
+    float: right;
+}
+.staking button{
+    margin-left: 12px;
 }
 .newaccount button{
     color: var(--gold-text);

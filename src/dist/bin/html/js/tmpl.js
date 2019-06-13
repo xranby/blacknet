@@ -25,7 +25,6 @@ Blacknet.template = {
             status = await Blacknet.getStatusText(tx.height, tx.hash);
         }
 
-
         amount = Blacknet.getFormatBalance(amount);
 
         tmpl =
