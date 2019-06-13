@@ -17,7 +17,7 @@ void function () {
     const account = localStorage.account;
     const dialogAccount = $('.dialog.account');
     const notificationNode = $('.notification.tx').first();
-    const txList =  $('#tx-list');
+    const txList = $('#tx-list');
 
     Blacknet.init = async function () {
 
@@ -298,53 +298,82 @@ void function () {
 
         let data = await Blacknet.getPromise('/walletdb/getwallet/' + account, 'json');
         let transactions = data.transactions;
-        let defaultTxAmount = 100, txProgress = $('.tx-progress');
         let array = [];
-        let noTxYet = $('.tx-foot .no_tx_yet'), showMore = $('.tx-foot .show_more_txs');
-
-        transactions.length == 0 ? noTxYet.show() : noTxYet.hide();
-
+        
         array = Blacknet.serializeTx(transactions);
-
+        Blacknet.txdb = {};
+        Blacknet.txIndex = array;
         Blacknet.renderLeaseOption(array);
 
-        txProgress.hide();
-
-        txList.html('');
-
-        while (array.length && defaultTxAmount-- > 0) {
-
-            await Blacknet.processTransaction(array.shift())
-        }
-
-        if (array.length > 0) {
-            Blacknet.subTransactions = array;
-            showMore.show();
-        }
+        await Blacknet.renderTxs(array);
+        Blacknet.renderTxOption();
     };
 
-    Blacknet.processTransaction = async function(data){
+    Blacknet.renderTxOption = function(){
 
-        let tx = await Blacknet.getPromise('/walletdb/gettransaction/' + data.hash + '/false', 'json');
+        // let txTypeNode = $('#tx-type'), list = Blacknet.txIndex, txCount = {};
+
+        // txTypeNode.find('option[value="rat4"]').text('All ('+list.length + ')');
+
+        // for(let tx of Blacknet.txIndex){
+
+        //     if(txCount[tx.type])
+        // }
+
+
+    };
+
+    Blacknet.renderTxs = async function(txArray){
+
+        let defaultTxAmount = 100, txProgress = $('.tx-progress'),
+            showMore = $('.tx-foot .show_more_txs'),
+            noTxYet = $('.tx-foot .no_tx_yet');
+
+        txArray.length == 0 ? noTxYet.show() : noTxYet.hide();
+        txProgress.hide();
+        txList.html('');
+
+        Blacknet.currentTxIndex = txArray;
+
+        for(let tx of txArray){
+
+            if(defaultTxAmount-- < 1){
+                break;
+            }
+            await Blacknet.processTransaction(tx);
+        }
+
+        if ( defaultTxAmount < 0) {
+            showMore.show();
+        }
+
+    };
+
+    Blacknet.processTransaction = async function (data) {
+
+        let tx = Blacknet.txdb[data.height + data.time];
+
+        if (tx) {
+            await Blacknet.renderTransaction(tx);
+            return;
+        }
+
+        tx = await Blacknet.getPromise('/walletdb/gettransaction/' + data.hash + '/false', 'json');
         tx.height = data.height;
         tx.time = data.time;
-
-        Blacknet.renderTransaction(tx);
+        Blacknet.txdb[data.height + data.time] = tx;
+        await Blacknet.renderTransaction(tx);
     };
 
     Blacknet.showMoreTxs = async function () {
 
-        let transactions = Blacknet.subTransactions;
+        let transactions = Blacknet.currentTxIndex.slice(100);
         let node = $('.tx-item:last-child');
 
         time = +node[0].dataset.time || 0;
 
-        while(transactions.length){
-            let tx = transactions.shift();
-
-            if(tx.time < time){ 
-                await Blacknet.processTransaction(tx);
-            }
+        for(let tx of transactions){
+            await Blacknet.processTransaction(tx);
         }
     };
 
@@ -379,11 +408,10 @@ void function () {
 
     Blacknet.renderTransaction = async function (tx, prepend) {
 
-        let node = txList.find('.txhash' + tx.hash);
+        let node = txList.find('.txhash' + tx.height + tx.time);
         if (typeof tx.height == 'undefined') {
             tx.height = 0;
         }
-        
         // if tx already render, update status
         if (node.html()) {
             await Blacknet.renderTxStatus(0, node[0]);
@@ -391,26 +419,25 @@ void function () {
         }
 
         node = await Blacknet.template.transaction(tx, account);
-
         prepend ? node.prependTo(txList) : node.appendTo(txList);
     };
 
     Blacknet.getStatusText = async function (height, hash) {
-        
+
         let confirmations = Blacknet.ledger.height - height + 1, statusText = 'Confirmed';
         if (height == 0) {
-            
+
             confirmations = await Blacknet.getPromise('/walletdb/getconfirmations/' + hash);
             statusText = `${confirmations} Confirmations`;
 
-        }else if ( confirmations < DEFAULT_CONFIRMATIONS) {
-            
+        } else if (confirmations < DEFAULT_CONFIRMATIONS) {
+
             statusText = `${confirmations} Confirmations`;
         }
         return statusText;
     };
 
-    Blacknet.getTxType = function(tx){
+    Blacknet.getTxType = function (tx) {
 
         let txType = ["Transfer", "Burn", "Lease", "CancelLease", "Bundle", "CreateHTLC",
             "UnlockHTLC", "RefundHTLC", "SpendHTLC", "CreateMultisig", "SpendMultisig"];
@@ -431,18 +458,18 @@ void function () {
         return type;
     };
 
-    Blacknet.getFormatBalance = function(balance){
+    Blacknet.getFormatBalance = function (balance) {
 
         return new BigNumber(balance).dividedBy(1e8).toFixed(8) + ' BLN';
     };
 
-    Blacknet.newTransactionNotify = function(tx){
+    Blacknet.newTransactionNotify = function (tx) {
 
         let notification = notificationNode.clone();
         let time = Blacknet.unix_to_local_time(tx.time);
         let type = Blacknet.getTxType(tx), amount = Blacknet.getFormatBalance(tx.data.amount);;
 
-        if(type == 'Generated'){
+        if (type == 'Generated') {
             amount = Blacknet.getFormatBalance(tx.fee);
         }
 
@@ -452,24 +479,24 @@ void function () {
 
         notification.appendTo('body').show();
 
-        notification.delay(2000).animate({top: "-100px", opacity: 0}, 1000, function(){
+        notification.delay(2000).animate({ top: "-100px", opacity: 0 }, 1000, function () {
             notification.remove();
         });
     };
-    Blacknet.renderTxStatus = async function(index, el){
+    Blacknet.renderTxStatus = async function (index, el) {
 
         let statusText, node = $(el).find('.status');
 
-        if(node.text() == 'Confirmed') return;
-        
+        if (node.text() == 'Confirmed') return;
+
         statusText = await Blacknet.getStatusText(el.dataset.height, el.dataset.hash);
         node.text(statusText);
     };
-    
+
 
 
     Blacknet.refreshTxConfirmations = function () {
-        
+
         $.each($('#tx-list tr'), Blacknet.renderTxStatus);
     };
 

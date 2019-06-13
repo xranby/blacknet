@@ -52,3 +52,6 @@ MIT license: https://jquery.org/license/
 
 bignumber.js https://mikemcl.github.io/bignumber.js/ is licensed under the
 MIT license: https://github.com/MikeMcl/bignumber.js/blob/master/LICENCE
+
+Font Awesome https://fontawesome.com/v4.7.0/ is licensed under the
+Font Awesome Free License: https://github.com/FortAwesome/Font-Awesome/blob/master/LICENSE.txt

@@ -288,13 +288,14 @@ table {
     min-width: 800px;
 }
 
-thead td {
+thead td{
     color: var(--grey-text);
     padding: 10px;
     text-align: center;
     font-size: 16px;
     background-color: var(--darker-grey-bg);
 }
+
 
 tbody td, tfoot td {
     color: var(--grey-text);
