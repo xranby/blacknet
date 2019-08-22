@@ -574,6 +574,8 @@ void function () {
             i18n({ locale: 'ja' });
         } else if (lang.indexOf('sk') !== -1) {
             i18n({ locale: 'sk' });
+        } else if (lang.indexOf('de') !== -1) {
+            i18n({ locale: 'de' });
         }
 
         Blacknet.init();
