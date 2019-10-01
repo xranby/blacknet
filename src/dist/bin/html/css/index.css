@@ -340,6 +340,21 @@ tbody td, tfoot td {
 .tx-foot tr{
     display: none;
 }
+
+#tx-table{
+    margin-top: 0;
+}
+
+.filter a{
+    padding: 0 10px;
+    line-height: 32px;
+    display: inline-block;
+    margin-top: 20px;
+    font-size: 14px;
+}
+.filter a.active{
+    background: #2D2D2D;
+}
 table td.right {
     text-align: right;
 }
