@@ -156,6 +156,35 @@
                             </tr>
                         </tbody>
                     </table>
+                    <h3 data-i18n="staking info">Staking Info</h3>
+                    <table class="staking_info">
+                        <tbody>
+                            <tr class="overview_warnings_row">
+                                <td data-i18n="Staking Accounts">Staking Accounts</td>
+                                <td>
+                                    <span class="stakingAccounts"></span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td data-i18n="weight">Weight</td>
+                                <td width="636">
+                                    <span class="weight"></span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td data-i18n="networkWeight">Network Weight</td>
+                                <td>
+                                    <span class="networkWeight"></span>
+                                </td>
+                            </tr>
+                            <tr>
+                                <td data-i18n="expectedTime">Expected Time</td>
+                                <td>
+                                    <span class="expectedTime"></span>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
                 <div class="staking">
                     <h3 data-i18n="staking info">Staking Info</h3>
@@ -431,39 +460,23 @@
                     </div>
                 </div>
                 <div class="cancel_lease">
-                    <fieldset>
-                        <legend data-i18n="cancel lease bln">Cancel Lease BLN</legend>
-                        <div class="field-row">
-                            <label data-i18n="cancel lease to">Cancel Lease To</label>
-                            <!-- <input type="text" id="cancel_lease_to"> -->
-                            <select name="account" id="cancel_lease_to"></select>
-                        </div>
-
-                        <div class="field-row">
-                            <label>
-                                <span data-i18n="amount">Amount</span>
-                                <strong>(BLN)</strong>
-                            </label>
-                            <input type="number" step="0.00000001" min="1" id="cancel_lease_amount">
-                        </div>
-                        <div class="field-row">
-                            <label data-i18n="block height">Block Height</label>
-                            <!-- <input type="number" id="cancel_lease_height"> -->
-                            <select name="account" id="cancel_lease_height"></select>
-                        </div>
-                        <div class="field-row">
-                            <label>
-                                <span data-i18n="fee">Fee</span>
-                                <strong>(BLN)</strong>
-                            </label>
-                            <input type="text" id="cancel_lease_fee" value='0.001'>
-                        </div>
-                        <button id="cancel_lease" data-i18n="cancel lease">Cancel Lease</button>
-                    </fieldset>
-                    <div class="field-row field-row-outer hidden">
-                        <label data-i18n="result">Result</label>
-                        <p id="cancel_lease_result"></p>
-                    </div>
+                    <h3 data-i18n="out leases">Out Leases</h3>
+                    <table id="leases-table">
+                        <thead>
+                            <tr>
+                                <td data-i18n="Index">Index</td>
+                                <td data-i18n="Account">Account</td>
+                                <td data-i18n="Height">Height</td>
+                                <td data-i18n="Amount">Amount</td>
+                                <td data-i18n="Cancel Lease">Cancel</td>
+                            </tr>
+                        </thead>
+                        <tbody id="leases-list">
+                            <tr>
+                                <td colspan="5" class="text-center">No out leases yet</td>
+                            </tr>
+                        </tbody>
+                    </table>
                 </div>
             </div>
             <!-- End container div -->

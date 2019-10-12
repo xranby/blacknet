@@ -117,7 +117,7 @@ header .network {
 }
 
 .menu .cancel_lease_tab{
-    display: none;
+    /* display: none; */
 }
 
 .rightpanel {

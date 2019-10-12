@@ -42,7 +42,8 @@ Blacknet.template = {
         }
 
         if(tx.type == 2 || tx.type == 3){
-            txText = `<a target="_blank" href="${Blacknet.explorer.tx + tx.hash.toLowerCase()}">${type} ${account == tx.from ? "to" : 'from'}</a>`;
+            txText = `<a target="_blank" href="${Blacknet.explorer.tx + tx.hash.toLowerCase()}">
+            ${type} ${account == tx.from ? "to" : 'from'}</a>`;
         }
 
         if(tx.type < 254 && tx.type != 0 && tx.type != 2 && tx.type != 3){
@@ -97,6 +98,25 @@ Blacknet.template = {
             node.find('.sign_text,.to,.fee').hide();
         }
         return node;
+    },
+
+
+    lease: function(tx, index){
+        let link = `<a target="_blank" href="${Blacknet.explorer.account + tx.publicKey}">${tx.publicKey}</a>`
+        let amount = Blacknet.getFormatBalance(tx.amount);
+        let tmpl =
+            `<tr>
+                <td>${index + 1}</td>
+                <td>${link}</td>
+                <td>${tx.height}</td>
+                <td>${amount}</td>
+                <td><a href="#" class="cancel_lease_btn"
+                                data-account="${tx.publicKey}" 
+                                data-amount="${amount.slice(0,-4)}"
+                                data-height="${tx.height}">Cancel</a></td>
+            </tr>`;
+
+        $(tmpl).appendTo("#leases-list");
     },
 
     peer: function (peer, index) {

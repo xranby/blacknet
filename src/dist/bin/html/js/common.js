@@ -132,7 +132,7 @@ void function () {
         }
     };
 
-    Blacknet.renderOverview = function () {
+    Blacknet.renderOverview = async function () {
 
         let ledger = Blacknet.ledger;
 
@@ -151,6 +151,14 @@ void function () {
             }
             $('.overview_' + key).text(value);
         }
+
+        let staking = await Blacknet.getPromise('/staking');
+
+        for (let key in staking) {
+
+            $('.staking_info').find('.' + key).text(staking[key]);
+        }
+
     };
 
     Blacknet.renderProgressBar = async function (timestamp) {
@@ -351,9 +359,9 @@ void function () {
         array = Blacknet.serializeTx(transactions);
         Blacknet.txdb = {};
         Blacknet.txIndex = array;
-        Blacknet.renderLeaseOption(array);
 
         await Blacknet.renderTxs(array);
+        await Blacknet.renderLease();
     };
 
     Blacknet.renderTxs = async function (txArray, type) {
@@ -366,13 +374,13 @@ void function () {
         let renderArray = txArray;
 
         if (type) {
-            renderArray = txArray.filter(function (tx) { 
+            renderArray = txArray.filter(function (tx) {
                 return tx.type == type && tx.height > 0;
             });
         }
 
         if ('genesis' == type) {
-            renderArray = txArray.filter(function (tx) { 
+            renderArray = txArray.filter(function (tx) {
                 return tx.time == GENESIS_TIME;
             });
         }
@@ -439,35 +447,6 @@ void function () {
         Blacknet.stopMore = true;
     }
 
-    Blacknet.renderLeaseOption = async function (txns) {
-
-
-        let outLeases = await Blacknet.getPromise('/wallet/outleases/' + account, 'json');
-        let accounts = [], aobj = {}, hobj = {}, height = [];
-
-        if (outLeases.length == 0) return;
-
-        outLeases.map(function (tx) {
-            aobj[tx.publicKey] = '';
-            hobj[tx.height] = '';
-        });
-
-        accounts = Object.keys(aobj);
-        height = Object.keys(hobj);
-
-        accounts.forEach(function (account) {
-
-            $('#cancel_lease_to').append($("<option></option>").attr("value", account).text(account));
-        });
-
-        height.forEach(function (account) {
-
-            $('#cancel_lease_height').append($("<option></option>").attr("value", account).text(account));
-        });
-
-        $('.cancel_lease_tab').show();
-    };
-
     Blacknet.renderTransaction = async function (tx, prepend) {
 
         let node = txList.find('.txhash' + tx.height + tx.time);
@@ -482,6 +461,20 @@ void function () {
 
         node = await Blacknet.template.transaction(tx, account);
         prepend ? node.prependTo(txList) : node.appendTo(txList);
+
+    };
+
+    Blacknet.renderLease = async function () {
+
+        let outLeases = await Blacknet.getPromise('/wallet/outleases/' + account);
+        $('.cancel_lease_tab').show();
+
+        if (outLeases.length > 0) {
+
+            $('#leases-list').html('');
+            outLeases.map(Blacknet.template.lease);
+
+        }
     };
 
     Blacknet.getStatusText = async function (height, hash) {
@@ -622,7 +615,7 @@ void function () {
         if (account) {
             await Blacknet.initRecentTransactions();
         }
-        
+
         callback();
     };
 
@@ -631,10 +624,10 @@ void function () {
         await Blacknet.balance();
     };
 
-    Blacknet.initExplorer = function(){
+    Blacknet.initExplorer = function () {
 
         let obj = Blacknet.explorer;
-        for(let key in obj){
+        for (let key in obj) {
 
             $('.config').find('#' + key).val(obj[key]);
         }
@@ -661,7 +654,7 @@ void function () {
      * @return {boolean} true/false
      */
     Blacknet.verifyMnemonic = function (mnemonic) {
-        if (Object.prototype.toString.call(mnemonic) === "[object String]" 
+        if (Object.prototype.toString.call(mnemonic) === "[object String]"
             && mnemonic.split(" ").length == 12) {
             return true
         }
@@ -675,8 +668,8 @@ void function () {
      * @return {boolean} true/false
      */
     Blacknet.verifyAccount = function (account) {
-        if (Object.prototype.toString.call(account) === "[object String]" && 
-                account.length > 21 && /^blacknet[a-z0-9]{59}$/.test(account)) {
+        if (Object.prototype.toString.call(account) === "[object String]" &&
+            account.length > 21 && /^blacknet[a-z0-9]{59}$/.test(account)) {
             return true
         }
         return false
@@ -729,8 +722,8 @@ void function () {
      */
     Blacknet.verifyNetworkAddress = function (address) {
         // ipv4 | ipv6 | tor | i2p
-        if (Object.prototype.toString.call(address) === "[object String]" && 
-                address.length >= 7 && address.length <= 70) {
+        if (Object.prototype.toString.call(address) === "[object String]" &&
+            address.length >= 7 && address.length <= 70) {
             return true
         }
         return false
