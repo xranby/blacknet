@@ -263,6 +263,10 @@ class Connection(
             return this == INCOMING_CONNECTED || this == OUTGOING_CONNECTED
         }
 
+        fun isIncoming(): Boolean {
+            return this == INCOMING_CONNECTED || this == INCOMING_WAITING
+        }
+
         fun isOutgoing(): Boolean {
             return this == OUTGOING_CONNECTED || this == OUTGOING_WAITING
         }

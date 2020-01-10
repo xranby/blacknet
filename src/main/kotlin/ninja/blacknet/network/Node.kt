@@ -285,13 +285,14 @@ object Node {
     }
 
     private suspend fun haveSlot(): Boolean {
-        if (incoming(true) < Config.incomingConnections)
-            return true
-        return evictConnection()
+        return if (incoming(true) < Config.incomingConnections)
+            true
+        else
+            evictConnection()
     }
 
     private suspend fun evictConnection(): Boolean {
-        val candidates = connections.copy().asSequence()
+        val candidates = connections.filter { it.state.isIncoming() }.asSequence()
                 .sortedBy { if (it.ping != 0L) it.ping else Long.MAX_VALUE }.drop(4)
                 .sortedByDescending { it.lastTxTime }.drop(4)
                 .sortedByDescending { it.lastBlockTime }.drop(4)
