@@ -80,7 +80,7 @@ class Connection(
     var timeOffset: Long = 0
 
     fun launch() {
-        pinger = Runtime.launch { pinger() }
+        pinger = Runtime.launch { Pinger.implementation(this@Connection) }
         peerAnnouncer = Runtime.launch { peerAnnouncer() }
         inventoryBroadcaster = Runtime.launch { inventoryBroadcaster() }
         Runtime.launch { receiver() }
@@ -275,37 +275,6 @@ class Connection(
             return this == OUTGOING_CONNECTED || this == OUTGOING_WAITING
                     || this == PROBER_CONNECTED || this == PROBER_WAITING
         }
-    }
-
-    private suspend fun pinger() {
-        delay(Node.NETWORK_TIMEOUT)
-
-        if (state.isConnected()) {
-            sendPing()
-        } else {
-            close()
-            return
-        }
-
-        while (true) {
-            delay(Node.NETWORK_TIMEOUT)
-
-            if (pingRequest == null) {
-                if (Runtime.time() > lastPacketTime + Node.NETWORK_TIMEOUT) {
-                    sendPing()
-                }
-            } else {
-                logger.info("Disconnecting ${debugName()} on ping timeout")
-                close()
-                return
-            }
-        }
-    }
-
-    private fun sendPing() {
-        val id = Random.nextInt()
-        pingRequest = Pair(id, Runtime.timeMilli())
-        sendPacket(Ping(id))
     }
 
     private suspend fun peerAnnouncer() {

@@ -74,6 +74,9 @@ object TxFetcher {
             connection.sendPacket(GetData(request.map { Pair(DataType.Transaction, it) }))
     }
 
+    /**
+     * 看门狗计时器
+     */
     private suspend fun watchdog() {
         delay(Node.NETWORK_TIMEOUT)
 

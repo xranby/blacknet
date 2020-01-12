@@ -13,25 +13,18 @@ import kotlinx.io.core.ByteReadPacket
 import kotlinx.serialization.Serializable
 import ninja.blacknet.Runtime
 import ninja.blacknet.network.Connection
+import ninja.blacknet.network.Pinger
 import ninja.blacknet.serialization.BinaryEncoder
 
 @Serializable
 class Pong(
-        private val id: Int
+        val response: Int
 ) : Packet {
     override fun serialize(): ByteReadPacket = BinaryEncoder.toPacket(serializer(), this)
 
     override fun getType() = PacketType.Pong
 
     override suspend fun process(connection: Connection) {
-        val (pingId, pingTime) = connection.pingRequest ?: return connection.dos("Unexpected Pong")
-
-        if (pingId != id) {
-            connection.dos("Invalid Pong id")
-            return
-        }
-
-        connection.ping = Runtime.timeMilli() - pingTime
-        connection.pingRequest = null
+        Pinger.pong(connection, this)
     }
 }
