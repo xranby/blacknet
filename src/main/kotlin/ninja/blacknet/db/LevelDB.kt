@@ -12,6 +12,7 @@ package ninja.blacknet.db
 import mu.KotlinLogging
 import ninja.blacknet.Config
 import ninja.blacknet.Config.dbcache
+import ninja.blacknet.Runtime
 import ninja.blacknet.util.startsWith
 import org.iq80.leveldb.*
 import java.io.File
@@ -106,20 +107,27 @@ object LevelDB {
                 .compressionType(CompressionType.NONE)
                 .cacheSize(cacheSize / 2L)
                 .writeBufferSize(cacheSize / 4)
-                .maxOpenFiles(64)
+                .xMaxOpenFiles()
                 .logger(DBLogger)
         logger.info("LevelDB cache ${Config[dbcache]} MiB, max open files ${options.maxOpenFiles()}")
         return options
     }
 
+    private fun Options.xMaxOpenFiles(): Options {
+        return if (Runtime.macOS || !System.getProperty("os.arch").contains("64"))
+            maxOpenFiles(64)
+        else
+            this
+    }
+
     private fun loadFactory(): DBFactory {
-        for (impl in arrayOf(
+        for ((name, clazz) in arrayOf(
                 Pair("LevelDB JNI", "org.fusesource.leveldbjni.JniDBFactory"),
                 Pair("LevelDB Java", "org.iq80.leveldb.impl.Iq80DBFactory"))) {
             for (loader in arrayOf(ClassLoader.getSystemClassLoader(), javaClass.classLoader)) {
                 try {
-                    val factory = loader.loadClass(impl.second).getConstructor().newInstance() as DBFactory
-                    logger.info("Loaded ${impl.first}")
+                    val factory = loader.loadClass(clazz).getConstructor().newInstance() as DBFactory
+                    logger.info("Loaded $name")
                     return factory
                 } catch (e: Throwable) {
                 }
