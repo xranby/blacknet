@@ -49,7 +49,7 @@ enum class Network(val type: Byte, val addrSize: Int) {
             IPv4 -> InetSocketAddress(InetAddress.getByAddress(address.bytes), address.port.toPort()).getHostString()
             IPv6 -> '[' + InetSocketAddress(InetAddress.getByAddress(address.bytes), address.port.toPort()).getHostString() + ']'
             TORv2 -> Base32.encode(address.bytes) + TOR_SUFFIX
-            TORv3 -> Base32.encode(address.bytes) + TOR_SUFFIX //FIXME checksum
+            TORv3 -> Base32.encode(address.bytes + TorController.checksum(address.bytes, TorController.V3) + TorController.V3) + TOR_SUFFIX
             I2P -> Base32.encode(address.bytes) + I2P_SUFFIX
         }
     }
@@ -271,12 +271,18 @@ enum class Network(val type: Byte, val addrSize: Int) {
             if (host.endsWith(TOR_SUFFIX)) {
                 if (host.length == 16 + TOR_SUFFIX.length) {
                     val decoded = Base32.decode(host.substring(0, 16))
-                    if (decoded != null)
+                    if (decoded != null && decoded.size == TORv2.addrSize) {
                         return Address(TORv2, port, decoded)
-                } else if (host.length == 52 + TOR_SUFFIX.length) {
-                    val decoded = Base32.decode(host.substring(0, 52))
-                    if (decoded != null)
-                        return Address(TORv3, port, decoded)
+                    }
+                } else if (host.length == 56 + TOR_SUFFIX.length) {
+                    val decoded = Base32.decode(host.substring(0, 56))
+                    if (decoded != null && decoded.size == 35 && decoded[34] == TorController.V3) {
+                        val bytes = decoded.copyOf(32)
+                        val checksum = TorController.checksum(bytes, TorController.V3)
+                        if (checksum[0] == decoded[32] && checksum[1] == decoded[33]) {
+                            return Address(TORv3, port, bytes)
+                        }
+                    }
                 }
                 return null
             }
@@ -284,8 +290,9 @@ enum class Network(val type: Byte, val addrSize: Int) {
             if (host.endsWith(I2P_SUFFIX)) {
                 if (host.length == 52 + I2P_SUFFIX.length) {
                     val decoded = Base32.decode(host.substring(0, 52))
-                    if (decoded != null)
+                    if (decoded != null && decoded.size == I2P.addrSize) {
                         return Address(I2P, port, decoded)
+                    }
                 }
                 return null
             }

@@ -16,22 +16,25 @@ import net.freehaven.tor.control.TorControlConnection
 import net.freehaven.tor.control.TorControlError
 import ninja.blacknet.Config
 import ninja.blacknet.Config.torcontrol
-import ninja.blacknet.crypto.Base32
 import ninja.blacknet.util.emptyByteArray
+import org.bouncycastle.crypto.digests.SHA3Digest
 import java.io.File
 
 private val logger = KotlinLogging.logger {}
 
 object TorController {
-    private var privateKey = "NEW:RSA1024"
+    private var privateKey = "NEW:BEST"
 
     init {
         try {
             val file = File(Config.dataDir, "privateKey.tor")
             val lastModified = file.lastModified()
-            if (lastModified != 0L && lastModified < 1549868177000)
-                file.renameTo(File(Config.dataDir, "privateKey.$lastModified.tor"))
-            privateKey = File(Config.dataDir, "privateKey.tor").readText()
+            if (lastModified != 0L && lastModified < 1566666666000) {
+                if (file.renameTo(File(Config.dataDir, "privateKey.$lastModified.tor")))
+                    logger.info("Renamed private key file to privateKey.$lastModified.tor")
+            } else {
+                privateKey = file.readText()
+            }
         } catch (e: Throwable) {
         }
     }
@@ -48,16 +51,16 @@ object TorController {
         request[Config.netPort.toPort()] = null
 
         val response = tor.addOnion(privateKey, request)
-        val string = response[TorControlCommands.HS_ADDRESS]!!
-        val bytes = Base32.decode(string)!!
+        val string = response[TorControlCommands.HS_ADDRESS] ?: throw TorControlError("Failed to get address")
+        val address = Network.parse(string + Network.TOR_SUFFIX, Config.netPort) ?: throw TorControlError("Failed to parse address $string")
 
-        if (bytes.size != Network.TORv2.addrSize)
-            throw TorControlError("Unknown KeyType")
+        when (address.network) {
+            Network.TORv2, Network.TORv3 -> Unit
+            else -> throw TorControlError("Unknown network type ${address.network}")
+        }
 
-        if (privateKey == "NEW:RSA1024")
-            savePrivateKey(response[TorControlCommands.HS_PRIVKEY]!!)
-
-        val address = Address(Network.TORv2, Config.netPort, bytes)
+        if (privateKey.startsWith("NEW:"))
+            savePrivateKey(response[TorControlCommands.HS_PRIVKEY] ?: throw TorControlError("Failed to get private key"))
 
         return Pair(thread, address)
     }
@@ -70,5 +73,18 @@ object TorController {
         } catch (e: Throwable) {
             logger.error(e)
         }
+    }
+
+    private val CHECKSUM_CONST = ".onion checksum".toByteArray()
+    const val V3: Byte = 3
+
+    fun checksum(bytes: ByteArray, version: Byte): ByteArray {
+        val digest = SHA3Digest(256)
+        digest.update(CHECKSUM_CONST, 0, CHECKSUM_CONST.size)
+        digest.update(bytes, 0, bytes.size)
+        digest.update(version)
+        val result = ByteArray(32)
+        digest.doFinal(result, 0)
+        return result.copyOf(2)
     }
 }

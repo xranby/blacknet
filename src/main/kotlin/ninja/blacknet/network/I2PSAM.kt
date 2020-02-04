@@ -46,9 +46,12 @@ object I2PSAM {
         try {
             val file = File(Config.dataDir, "privateKey.i2p")
             val lastModified = file.lastModified()
-            if (lastModified != 0L && lastModified < 1549868177000)
-                file.renameTo(File(Config.dataDir, "privateKey.$lastModified.i2p"))
-            privateKey = file.readText()
+            if (lastModified != 0L && lastModified < 1550000000000) {
+                if (file.renameTo(File(Config.dataDir, "privateKey.$lastModified.i2p")))
+                    logger.info("Renamed private key file to privateKey.$lastModified.i2p")
+            } else {
+                privateKey = file.readText()
+            }
         } catch (e: Throwable) {
         }
     }
