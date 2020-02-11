@@ -248,12 +248,8 @@ object Node {
         val bytes = packet.build()
         connections.forEach {
             if (it.state.isConnected() && filter(it)) {
-                try {
-                    it.sendPacket(bytes.copy())
-                    n += 1
-                } catch (e: ClosedSendChannelException) {
-                    //FIXME 骂人用语
-                }
+                it.sendPacket(bytes.copy())
+                n += 1
             }
         }
         bytes.release()
