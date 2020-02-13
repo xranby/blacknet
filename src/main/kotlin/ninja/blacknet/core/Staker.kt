@@ -84,31 +84,34 @@ object Staker {
         if (timeSlot <= state.blockTime)
             return
 
-        @Suppress("LABEL_NAME_CLASH")
-        val block = stakers.mutex.withLock {
-            for (i in stakers.list.indices) {
-                val staker = stakers.list[i]
-
-                if (staker.lastBlock != state.blockHash) {
-                    BlockDB.mutex.withLock {
-                        state = LedgerDB.state()
-                        staker.updateImpl(state)
-                    }
-                }
-
-                val pos = PoS.check(timeSlot, staker.publicKey, state.nxtrng, state.difficulty, state.blockTime, staker.stake)
-                if (pos == Accepted) {
-                    val block = Block.create(state.blockHash, timeSlot, staker.publicKey)
-                    TxPool.fill(block)
-                    return@withLock block.sign(staker.privateKey)
+        stakers.forEach { staker ->
+            if (staker.lastBlock != state.blockHash) {
+                BlockDB.mutex.withLock {
+                    state = LedgerDB.state()
+                    staker.updateImpl(state)
                 }
             }
-            return@withLock null
-        }
 
-        if (block != null) {
-            logger.info("Staked ${block.first}")
-            Node.broadcastBlock(block.first, block.second)
+            val pos = PoS.check(timeSlot, staker.publicKey, state.nxtrng, state.difficulty, state.blockTime, staker.stake)
+            if (pos == Accepted) {
+                val block = Block.create(state.blockHash, timeSlot, staker.publicKey)
+                TxPool.fill(block)
+                val (hash, bytes) = block.sign(staker.privateKey)
+                logger.info("Staked $hash")
+                if (Node.broadcastBlock(hash, bytes)) {
+                    return
+                } else @Suppress("NAME_SHADOWING") {
+                    state = LedgerDB.state()
+                    if (timeSlot <= state.blockTime)
+                        return
+                    if (block.transactions.isEmpty())
+                        return
+                    block.transactions.clear()
+                    val (hash, bytes) = block.sign(staker.privateKey)
+                    logger.warn("Retry $hash")
+                    Node.broadcastBlock(hash, bytes)
+                }
+            }
         }
     }
 
