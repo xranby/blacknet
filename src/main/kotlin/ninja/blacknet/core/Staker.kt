@@ -107,8 +107,19 @@ object Staker {
                     if (block.transactions.isEmpty())
                         return
                     block.transactions.clear()
+                    if (TxPool.check() == false) {
+                        TxPool.fill(block)
+                        if (block.transactions.isNotEmpty()) {
+                            val (hash, bytes) = block.sign(staker.privateKey)
+                            logger.warn("Retry $hash")
+                            if (Node.broadcastBlock(hash, bytes))
+                                return
+                            else
+                                block.transactions.clear()
+                        }
+                    }
                     val (hash, bytes) = block.sign(staker.privateKey)
-                    logger.warn("Retry $hash")
+                    logger.warn("Empty $hash")
                     Node.broadcastBlock(hash, bytes)
                 }
             }

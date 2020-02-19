@@ -9,19 +9,25 @@
 
 package ninja.blacknet.core
 
+import com.google.common.collect.Maps.newHashMapWithExpectedSize
 import ninja.blacknet.crypto.Hash
+import kotlin.math.max
 
 abstract class MemPool {
-    private val map = HashMap<Hash, ByteArray>()
+    private var maxSeenSize = 512
+    private var map = newHashMapWithExpectedSize<Hash, ByteArray>(maxSeenSize)
     private var dataSize = 0
 
-    fun clearImpl() {
-        map.clear()
+    protected fun stealImpl(): HashMap<Hash, ByteArray> {
+        val stolen = map
+        maxSeenSize = max(maxSeenSize, stolen.size)
+        map = newHashMapWithExpectedSize<Hash, ByteArray>(maxSeenSize)
         dataSize = 0
+        return stolen
     }
 
-    fun copyImpl(): HashMap<Hash, ByteArray> {
-        return HashMap(map)
+    protected fun maxSeenSizeImpl(): Int {
+        return maxSeenSize
     }
 
     fun sizeImpl(): Int {

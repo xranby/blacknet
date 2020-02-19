@@ -33,23 +33,34 @@ object TxPool : MemPool(), Ledger {
     private val accounts = HashMap<PublicKey, AccountState>()
     private val htlcs = HashMap<Hash, HTLC?>()
     private val multisigs = HashMap<Hash, Multisig?>()
-    private val transactions = ArrayList<Hash>()
+    private var transactions = ArrayList<Hash>(maxSeenSizeImpl())
+
+    suspend fun check(): Boolean = mutex.withLock {
+        var result = true
+        val (txs, map) = steal()
+        for (hash in txs)
+            if (processImpl(hash, map[hash]!!) != Accepted)
+                result = false
+        if (result == false)
+            logger.warn("Removed ${txs.size - transactions.size} transactions, ${transactions.size} remain in pool")
+        result
+    }
 
     suspend fun fill(block: Block) = mutex.withLock {
         val poolSize = sizeImpl()
-        var freeSize = min(LedgerDB.state().maxBlockSize, Config.softBlockSizeLimit) - 176
+        var freeBlockSize = min(LedgerDB.state().maxBlockSize, Config.softBlockSizeLimit) - 176
         var i = 0
-        while (freeSize > 0 && i < poolSize) {
+        while (freeBlockSize > 0 && i < poolSize) {
             val hash = transactions.get(i++)
             val bytes = getImpl(hash)
             if (bytes == null) {
-                logger.error("inconsistent mempool")
+                logger.error("Inconsistent MemPool")
                 continue
             }
-            if (bytes.size + 4 > freeSize)
+            if (bytes.size + 4 > freeBlockSize)
                 break
 
-            freeSize -= bytes.size + 4
+            freeBlockSize -= bytes.size + 4
             block.transactions.add(SerializableByteArray(bytes))
         }
     }
@@ -233,15 +244,21 @@ object TxPool : MemPool(), Ledger {
         if (hashes.isEmpty() || transactions.isEmpty())
             return
 
-        val txs = ArrayList(transactions)
-        val map = copyImpl()
-        accounts.clear()
-        htlcs.clear()
-        multisigs.clear()
-        transactions.clear()
-        clearImpl()
+        val (txs, map) = steal()
         for (hash in txs)
             if (!hashes.contains(hash))
                 processImpl(hash, map[hash]!!)
     }
+
+    private fun steal(): Pair<ArrayList<Hash>, HashMap<Hash, ByteArray>> {
+        val txs = transactions
+        val map = stealImpl()
+        accounts.clear()
+        htlcs.clear()
+        multisigs.clear()
+        transactions = ArrayList(maxSeenSizeImpl())
+        return Pair(txs, map)
+    }
+
+    // 复活吗？
 }
