@@ -29,6 +29,9 @@ import ninja.blacknet.util.withTimeout
 
 private val logger = KotlinLogging.logger {}
 
+/**
+ * 链获取器
+ */
 object ChainFetcher {
     private val announces = Channel<Pair<Connection, ChainAnnounce>?>(16)
     private val recvChannel = Channel<Blocks>(Channel.RENDEZVOUS)

@@ -19,7 +19,7 @@ import ninja.blacknet.util.byteArrayOfInts
 import kotlin.math.min
 
 /**
- * 黑网持有量證明
+ * 黑网权益（持有量）证明
  */
 object PoS {
     fun mint(supply: Long): Long {

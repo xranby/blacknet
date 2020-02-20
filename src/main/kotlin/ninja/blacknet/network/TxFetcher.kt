@@ -20,6 +20,9 @@ import ninja.blacknet.packet.Transactions
 import ninja.blacknet.util.SynchronizedHashMap
 import ninja.blacknet.util.delay
 
+/**
+ * 交易获取器
+ */
 object TxFetcher {
     private val inventoryChannel: Channel<Pair<Connection, List<Hash>>> = Channel(Channel.UNLIMITED)
     private val requested = SynchronizedHashMap<Hash, Long>()

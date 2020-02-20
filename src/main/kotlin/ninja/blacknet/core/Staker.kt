@@ -29,9 +29,9 @@ import ninja.blacknet.util.sumByLong
 private val logger = KotlinLogging.logger {}
 
 /**
- * 持有工
+ * 权益关系器
  */
-object Staker {
+object Staker /* Holder */ {
     private class StakerState(
             val publicKey: PublicKey,
             val privateKey: PrivateKey,
