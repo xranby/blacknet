@@ -20,6 +20,7 @@ import mu.KotlinLogging
 import ninja.blacknet.Runtime
 import ninja.blacknet.network.Address
 import ninja.blacknet.network.AddressV1
+import ninja.blacknet.network.Network
 import ninja.blacknet.network.Node
 import ninja.blacknet.serialization.BinaryDecoder
 import ninja.blacknet.serialization.BinaryEncoder
@@ -352,7 +353,7 @@ object PeerDB {
 
         companion object {
             fun new(from: Address) = Entry(from, 0, 0, null)
-            fun newConnected(time: Long, userAgent: String) = Entry(Address.LOOPBACK, 0, 0, NetworkStat(time, userAgent))
+            fun newConnected(time: Long, userAgent: String) = Entry(Network.LOOPBACK, 0, 0, NetworkStat(time, userAgent))
         }
 
         @Suppress("unused")

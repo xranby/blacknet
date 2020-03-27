@@ -366,7 +366,7 @@ object Node {
             peers.add(address)
         }
 
-        val added = PeerDB.add(peers, Address.LOOPBACK, true)
+        val added = PeerDB.add(peers, Network.LOOPBACK, true)
 
         if (added > 0) {
             logger.info("Added $added built-in peer addresses to db")

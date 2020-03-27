@@ -14,11 +14,13 @@ import kotlinx.serialization.Encoder
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.Serializer
 import ninja.blacknet.Config
+import ninja.blacknet.crypto.Base32
 import ninja.blacknet.serialization.BinaryDecoder
 import ninja.blacknet.serialization.BinaryEncoder
 import java.net.InetAddress
 import java.net.InetSocketAddress
 import java.net.SocketAddress
+import kotlin.experimental.and
 
 /**
  * Network address
@@ -31,16 +33,25 @@ class Address(
 ) {
     internal constructor(address: AddressV1) : this(Network.get(address.network), address.port.toPort(), address.bytes)
 
-    fun isLocal(): Boolean {
-        return network.isLocal(this)
+    fun isLocal(): Boolean = when (network) {
+        Network.IPv4 -> isLocalIPv4()
+        Network.IPv6 -> isLocalIPv6()
+        Network.TORv2, Network.TORv3 -> false
+        Network.I2P -> false
     }
 
-    fun isPrivate(): Boolean {
-        return network.isPrivate(this)
+    fun isPrivate(): Boolean = when (network) {
+        Network.IPv4 -> isPrivateIPv4()
+        Network.IPv6 -> isPrivateIPv6()
+        Network.TORv2, Network.TORv3 -> false
+        Network.I2P -> false
     }
 
-    fun getAddressString(): String {
-        return network.getAddressString(this)
+    fun getAddressString(): String = when (network) {
+        Network.IPv4, Network.IPv6 -> InetSocketAddress(InetAddress.getByAddress(bytes), port.toPort()).getHostString()
+        Network.TORv2 -> Base32.encode(bytes) + Network.TOR_SUFFIX
+        Network.TORv3 -> Base32.encode(bytes + TorController.checksum(bytes, TorController.V3) + TorController.V3) + Network.TOR_SUFFIX
+        Network.I2P -> Base32.encode(bytes) + Network.I2P_SUFFIX
     }
 
     fun getSocketAddress(): SocketAddress {
@@ -63,13 +74,65 @@ class Address(
     }
 
     override fun toString(): String {
-        return getAddressString() + ':' + port.toPort()
+        return if (network != Network.IPv6)
+            "${getAddressString()}:${port.toPort()}"
+        else
+            "[${getAddressString()}]:${port.toPort()}"
+    }
+
+    private fun isLocalIPv4(): Boolean {
+        // 0.0.0.0 – 0.255.255.255
+        if (bytes[0] == 0.toByte()) return true
+        // 127.0.0.0 – 127.255.255.255
+        if (bytes[0] == 127.toByte()) return true
+        // 169.254.0.0 – 169.254.255.255
+        if (bytes[0] == 169.toByte() && bytes[1] == 254.toByte()) return true
+
+        return false
+    }
+
+    private fun isLocalIPv6(): Boolean {
+        // ::
+        if (bytes.contentEquals(Network.IPv6_ANY_BYTES)) return true
+        // ::1
+        if (bytes.contentEquals(Network.IPv6_LOOPBACK_BYTES)) return true
+        // fe80:: - febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff
+        if (       bytes[0] == 0xFE.toByte()
+                && bytes[1] == 0x80.toByte()
+                && bytes[2] == 0x00.toByte()
+                && bytes[3] == 0x00.toByte()
+                && bytes[4] == 0x00.toByte()
+                && bytes[5] == 0x00.toByte()
+                && bytes[6] == 0x00.toByte()
+                && bytes[7] == 0x00.toByte()
+        ) return true
+
+        return false
+    }
+
+    private fun isPrivateIPv4(): Boolean {
+        // 10.0.0.0 – 10.255.255.255
+        if (bytes[0] == 10.toByte()) return true
+        // 100.64.0.0 – 100.127.255.255
+        if (bytes[0] == 100.toByte() && bytes[1] >= 64 && bytes[1] <= 127) return true
+        // 172.16.0.0 – 172.31.255.255
+        if (bytes[0] == 172.toByte() && bytes[1] >= 16 && bytes[1] <= 31) return true
+        // 192.0.0.0 – 192.0.0.255
+        if (bytes[0] == 192.toByte() && bytes[1] == 0.toByte() && bytes[2] == 0.toByte()) return true
+        // 192.168.0.0 – 192.168.255.255
+        if (bytes[0] == 192.toByte() && bytes[1] == 168.toByte()) return true
+        // 198.18.0.0 – 198.19.255.255
+        if (bytes[0] == 198.toByte() && bytes[1] >= 18 && bytes[1] <= 19) return true
+
+        return false
+    }
+
+    private fun isPrivateIPv6(): Boolean {
+        return bytes[0] and 0xFE.toByte() == 0xFC.toByte()
     }
 
     @Serializer(forClass = Address::class)
     companion object {
-        val LOOPBACK = Address.IPv4_LOOPBACK(Config.netPort)
-
         fun IPv4_ANY(port: Short) = Address(Network.IPv4, port, ByteArray(Network.IPv4.addrSize))
         fun IPv4_LOOPBACK(port: Short) = Address(Network.IPv4, port, Network.IPv4_LOOPBACK_BYTES)
         fun IPv6_ANY(port: Short) = Address(Network.IPv6, port, Network.IPv6_ANY_BYTES)
