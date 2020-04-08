@@ -304,9 +304,9 @@ class Connection(
     }
 
     private suspend fun peerAnnouncer() {
-        while (true) {
-            delay(10 * 60 + Random.nextInt(10 * 60))
+        delay(10 * 60 + Random.nextInt(10 * 60))
 
+        while (true) {
             val n = Random.nextInt(Peers.MAX) + 1
 
             val randomPeers = PeerDB.getRandom(n)
@@ -315,10 +315,10 @@ class Connection(
 
             val myAddress = Node.listenAddress.filterToList { !it.isLocal() && !it.isPrivate() && !PeerDB.contains(it) }
             if (myAddress.size != 0) {
-                val i = Random.nextInt(randomPeers.size * 20)
+                val i = Random.nextInt(randomPeers.size * 4)
                 if (i < randomPeers.size) {
                     randomPeers[i] = myAddress[Random.nextInt(myAddress.size)]
-                    logger.info("Announcing ${randomPeers[i]} to ${debugName()}")
+                    logger.info("Whispering ${randomPeers[i].debugName()} to ${debugName()}")
                 }
             }
 
@@ -326,6 +326,8 @@ class Connection(
                 sendPacket(Peers(randomPeers))
             else
                 sendPacket(PeersV1(randomPeers.map { AddressV1(it) }))
+
+            delay(4 * 60 * 60 + Random.nextInt(20 * 60 * 60))
         }
     }
 

@@ -139,7 +139,7 @@ object Node {
             else -> throw NotImplementedError("Not implemented for " + address.network)
         }
         val server = aSocket(Network.selector).tcp().bind(addr)
-        logger.info("Listening on $address")
+        logger.info("Listening on ${address.debugName()}")
         Runtime.launch {
             listenAddress.add(address)
             listener(server)

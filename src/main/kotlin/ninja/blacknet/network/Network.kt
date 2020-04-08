@@ -203,7 +203,7 @@ enum class Network(val type: Byte, val addrSize: Int) {
                 try {
                     val (thread, localAddress) = TorController.listen()
 
-                    logger.info("Listening on $localAddress")
+                    logger.info("Listening on ${localAddress.debugName()}")
                     Node.listenAddress.add(localAddress)
 
                     thread.join()
@@ -230,7 +230,7 @@ enum class Network(val type: Byte, val addrSize: Int) {
                 try {
                     val (_, localAddress) = I2PSAM.createSession()
 
-                    logger.info("Listening on $localAddress")
+                    logger.info("Listening on ${localAddress.debugName()}")
                     Node.listenAddress.add(localAddress)
 
                     while (true) {

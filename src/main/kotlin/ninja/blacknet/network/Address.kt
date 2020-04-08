@@ -47,6 +47,13 @@ class Address(
         return InetSocketAddress(InetAddress.getByAddress(bytes), port.toPort())
     }
 
+    fun debugName(): String {
+        return if (Config.logIPs)
+            toString()
+        else
+            "$network address"
+    }
+
     override fun equals(other: Any?): Boolean {
         return (other is Address) && network == other.network && port == other.port && bytes.contentEquals(other.bytes)
     }
