@@ -614,7 +614,7 @@ void function () {
 
         let lang = navigator.language || navigator.userLanguage;
         if (lang.indexOf('zh') !== -1) {
-            i18n({ locale: 'zh' });
+            i18n({ locale: 'zh_CN' });
         } else if (lang.indexOf('ja') !== -1) {
             i18n({ locale: 'ja' });
         } else if (lang.indexOf('sk') !== -1) {

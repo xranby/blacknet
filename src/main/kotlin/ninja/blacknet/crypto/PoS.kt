@@ -19,7 +19,10 @@ import ninja.blacknet.util.byteArrayOfInts
 import kotlin.math.min
 
 /**
- * 黑网权益（持有量）证明
+ * 黑網權益證明算法
+ * 黑網是點對點技術
+ * 權益又譯為持有量
+ * 證明不能同步時鐘
  */
 object PoS {
     fun mint(supply: Long): Long {
