@@ -1,0 +1,60 @@
+#!/bin/false
+#
+# Copyright (c) 2020 Pavel Vasin
+#
+# Licensed under the Jelurida Public License version 1.1
+# for the Blacknet Public Blockchain Platform (the "License");
+# you may not use this file except in compliance with the License.
+# See the LICENSE.txt file at the top-level directory of this distribution.
+#
+
+image: openjdk:latest
+
+include:
+  # GradleProperties has not been loaded yet.
+  # - template: Dependency-Scanning.gitlab-ci.yml
+  - template: License-Scanning.gitlab-ci.yml
+  # Try again later.
+  # - template: SAST.gitlab-ci.yml
+  # - template: DAST.gitlab-ci.yml
+
+variables:
+  GRADLE_USER_HOME: ".gradle"
+#   SAST_DISABLE_DIND: "true"
+#   DAST_WEBSITE: http://localhost:8283/
+
+cache:
+  paths:
+    - .gradle/wrapper
+    - .gradle/caches
+
+stages:
+  - license_scanning
+  - test
+  - build
+
+license_scanning:
+  stage: license_scanning
+  artifacts:
+    reports:
+      license_scanning: gl-license-scanning-report.json
+
+test:
+  stage: test
+  script:
+    - ./gradlew test
+  artifacts:
+    reports:
+      junit: build/test-results/test/TEST-*.xml
+
+build:
+  stage: build
+  script:
+    - ./gradlew distTar
+    - tar -xf build/distributions/blacknet-*.*.*.tar
+  artifacts:
+    name: blacknet-gitlab-build
+    paths:
+      - blacknet-*.*.*
+  only:
+    - tags
