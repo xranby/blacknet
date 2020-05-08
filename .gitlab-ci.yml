@@ -52,9 +52,11 @@ build:
   script:
     - ./gradlew distTar
     - tar -xf build/distributions/blacknet-*.*.*.tar
+  rules:
+    - if: $CI_COMMIT_TAG
+      when: on_success
+    - when: never
   artifacts:
     name: blacknet-gitlab-build
     paths:
       - blacknet-*.*.*
-  only:
-    - tags
