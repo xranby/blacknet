@@ -1051,7 +1051,7 @@ fun Application.APIServer() {
         }
 
         get("/api/v2/staking") {
-            call.respondJson(StakingInfo.serializer(), Staker.info())
+            call.respondJson(StakingInfo.serializer(), Staker.info(null))
         }
 
         get("/api/v1/walletdb/getwallet/{address}") {

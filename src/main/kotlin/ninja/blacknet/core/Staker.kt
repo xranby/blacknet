@@ -34,10 +34,21 @@ private val logger = KotlinLogging.logger {}
 object Staker /* Holder */ {
     private class StakerState(
             val publicKey: PublicKey,
-            val privateKey: PrivateKey,
-            var lastBlock: Hash = Hash.ZERO,
-            var stake: Long = 0
+            val privateKey: PrivateKey
     ) {
+        val startTime = Runtime.timeMilli()
+        var hashCounter = 0
+        var lastBlock = Hash.ZERO
+        var stake = 0L
+
+        fun hashRate(): Double {
+            val time = Runtime.timeMilli() - startTime
+            return if (time != 0L)
+                hashCounter.toDouble() / (time / 1000)
+            else
+                0.0
+        }
+
         fun updateImpl(state: LedgerDB.State) {
             lastBlock = state.blockHash
             stake = LedgerDB.get(publicKey)?.stakingBalance(state.height) ?: 0
@@ -91,7 +102,7 @@ object Staker /* Holder */ {
                     staker.updateImpl(state)
                 }
             }
-
+            staker.hashCounter += 1
             val pos = PoS.check(timeSlot, staker.publicKey, state.nxtrng, state.difficulty, state.blockTime, staker.stake)
             if (pos == Accepted) {
                 val block = Block.create(state.blockHash, timeSlot, staker.publicKey)
@@ -170,11 +181,25 @@ object Staker /* Holder */ {
         return stakers.list.find { it.privateKey == privateKey } != null
     }
 
-    suspend fun info(): StakingInfo = stakers.mutex.withLock {
+    suspend fun info(publicKey: PublicKey?): StakingInfo {
+        val (nAccounts, hashRate, weight) = stakers.mutex.withLock {
+            if (publicKey == null) {
+                Triple(
+                        stakers.list.size,
+                        stakers.list.sumByDouble { it.hashRate() },
+                        stakers.list.sumByLong { it.stake }
+                )
+            } else {
+                val staker = stakers.list.find { it.publicKey == publicKey }
+                if (staker != null)
+                    Triple(1, staker.hashRate(), staker.stake)
+                else
+                    Triple(0, 0.0, 0L)
+            }
+        }
         val state = LedgerDB.state()
-        val weight = stakers.list.sumByLong { it.stake }
         val networkWeight = (PoS.MAX_DIFFICULTY / state.difficulty).toLong() / PoS.TARGET_BLOCK_TIME * PoS.TIME_SLOT
         val expectedTime = if (weight != 0L) PoS.TARGET_BLOCK_TIME * networkWeight / weight else 0L
-        return StakingInfo(stakers.list.size, weight.toString(), networkWeight.toString(), expectedTime)
+        return StakingInfo(nAccounts, hashRate, weight.toString(), networkWeight.toString(), expectedTime)
     }
 }

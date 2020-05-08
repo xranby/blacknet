@@ -14,6 +14,7 @@ import kotlinx.serialization.Serializable
 @Serializable
 class StakingInfo(
         val stakingAccounts: Int,
+        val hashRate: Double,
         val weight: String,
         val networkWeight: String,
         val expectedTime: Long
