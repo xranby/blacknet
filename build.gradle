@@ -34,7 +34,10 @@ repositories {
 dependencies {
     implementation "org.jetbrains.kotlin:kotlin-stdlib-jdk8:$kotlin_version"
     implementation "io.ktor:ktor-network:$ktor_version"
-    implementation "io.ktor:ktor-server-netty:$ktor_version"
+    implementation("io.ktor:ktor-server-netty:$ktor_version") {
+        exclude group: "org.eclipse.jetty", module: "jetty-parent"
+        exclude group: "org.eclipse.jetty.alpn", module: "alpn-api"
+    }
     implementation "io.ktor:ktor-websockets:$ktor_version"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-core-common:$coroutines_version"
     implementation "org.jetbrains.kotlinx:kotlinx-coroutines-debug:$coroutines_version"
