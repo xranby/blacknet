@@ -11,9 +11,9 @@
 package ninja.blacknet
 
 import com.rfksystems.blake2b.security.Blake2bProvider
-import io.ktor.server.cio.CIO
 import io.ktor.server.engine.commandLineEnvironment
 import io.ktor.server.engine.embeddedServer
+import io.ktor.server.jetty.Jetty
 import io.ktor.util.error
 import kotlinx.coroutines.debug.DebugProbes
 import mu.KotlinLogging
@@ -86,10 +86,10 @@ object Main {
          *
          */
         if (Config.publicAPI())
-            embeddedServer(CIO, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "ktor.conf")))).start(wait = false)
+            embeddedServer(Jetty, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "ktor.conf")))).start(wait = false)
         if (Config.regTest)
-            embeddedServer(CIO, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "regtest.conf")))).start(wait = true)
+            embeddedServer(Jetty, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "regtest.conf")))).start(wait = true)
         else
-            embeddedServer(CIO, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "rpc.conf")))).start(wait = true)
+            embeddedServer(Jetty, commandLineEnvironment(arrayOf("-config=" + File(Config.dir, "rpc.conf")))).start(wait = true)
     }
 }
