@@ -65,6 +65,8 @@ class Connection(
     @Volatile
     var lastTxTime: Long = 0
     @Volatile
+    var lastPingTime: Long = 0
+    @Volatile
     var lastInvSentTime: Long = 0
     @Volatile
     var ping: Long = 0
@@ -80,7 +82,7 @@ class Connection(
     var timeOffset: Long = 0
 
     fun launch() {
-        pinger = Runtime.launch { Pinger.implementation(this@Connection) }
+        pinger = Runtime.launch { pinger() }
         peerAnnouncer = Runtime.launch { peerAnnouncer() }
         inventoryBroadcaster = Runtime.launch { inventoryBroadcaster() }
         Runtime.launch { receiver() }
@@ -275,6 +277,38 @@ class Connection(
             return this == OUTGOING_CONNECTED || this == OUTGOING_WAITING
                     || this == PROBER_CONNECTED || this == PROBER_WAITING
         }
+    }
+
+    private suspend fun pinger() {
+        delay(Node.NETWORK_TIMEOUT)
+
+        if (state.isConnected()) {
+            delay(Random.nextInt(Node.NETWORK_TIMEOUT))
+            sendPing()
+        } else {
+            close()
+            return
+        }
+
+        while (true) {
+            delay(Node.NETWORK_TIMEOUT)
+
+            if (pingRequest == null) {
+                if (Runtime.time() > lastPacketTime + Node.NETWORK_TIMEOUT) {
+                    sendPing()
+                }
+            } else {
+                logger.info("Disconnecting ${debugName()} on ping timeout")
+                close()
+                return
+            }
+        }
+    }
+
+    private fun sendPing() {
+        val challenge = Random.nextInt()
+        pingRequest = Pair(challenge, Runtime.timeMilli())
+        sendPacket(Ping(challenge))
     }
 
     private suspend fun peerAnnouncer() {
