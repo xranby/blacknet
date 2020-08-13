@@ -19,6 +19,7 @@ import kotlin.math.min
  */
 object UserAgent {
     val string = "/${Version.name}:${Version.version}/"
+    val prober = "/${Version.name}-prober:${Version.version}/"
 
     fun sanitize(string: String): String {
         val length = min(string.length, MAX_LENGTH)

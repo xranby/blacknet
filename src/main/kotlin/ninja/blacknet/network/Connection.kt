@@ -223,10 +223,10 @@ class Connection(
                     State.INCOMING_CONNECTED, State.OUTGOING_CONNECTED -> {
                         ChainFetcher.disconnected(this@Connection)
                     }
-                    State.OUTGOING_WAITING -> {
+                    State.OUTGOING_WAITING, State.PROBER_WAITING -> {
                         PeerDB.failed(remoteAddress, connectedAt)
                     }
-                    State.INCOMING_WAITING -> {
+                    State.INCOMING_WAITING, State.PROBER_CONNECTED -> {
                     }
                 }
 
@@ -257,10 +257,14 @@ class Connection(
         INCOMING_CONNECTED,
         INCOMING_WAITING,
         OUTGOING_CONNECTED,
-        OUTGOING_WAITING;
+        OUTGOING_WAITING,
+        PROBER_CONNECTED,
+        PROBER_WAITING,
+        ;
 
         fun isConnected(): Boolean {
             return this == INCOMING_CONNECTED || this == OUTGOING_CONNECTED
+                    // this == PROBER_CONNECTED
         }
 
         fun isIncoming(): Boolean {
@@ -269,6 +273,7 @@ class Connection(
 
         fun isOutgoing(): Boolean {
             return this == OUTGOING_CONNECTED || this == OUTGOING_WAITING
+                    || this == PROBER_CONNECTED || this == PROBER_WAITING
         }
     }
 

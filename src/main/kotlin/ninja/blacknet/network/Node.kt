@@ -68,6 +68,7 @@ object Node {
             if (!Config.isDisabled(Network.I2P))
                 Runtime.launch { Network.listenOnI2P() }
             Runtime.launch { connector() }
+            Runtime.rotate(::prober)
         }
     }
 
@@ -154,19 +155,23 @@ object Node {
         listenOn(Address.IPv4_ANY(Config.netPort))
     }
 
-    suspend fun connectTo(address: Address) {
-        val connection = Network.connect(address)
+    suspend fun connectTo(address: Address, prober: Boolean = false) {
+        val connection = Network.connect(address, prober)
         connections.mutex.withLock {
             connections.list.add(connection)
             connection.launch()
         }
-        sendVersion(connection, nonce(address.network))
+        sendVersion(connection, nonce(address.network), prober)
     }
 
-    fun sendVersion(connection: Connection, nonce: Long) {
-        val state = LedgerDB.state()
-        val chain = ChainAnnounce(state.blockHash, state.cumulativeDifficulty)
-        val v = Version(magic, version, Runtime.time(), nonce, UserAgent.string, minTxFee, chain)
+    fun sendVersion(connection: Connection, nonce: Long, prober: Boolean) {
+        val v = if (prober) {
+            Version(magic, version, Runtime.time(), nonce, UserAgent.prober, Long.MAX_VALUE, ChainAnnounce.GENESIS)
+        }
+        else {
+            val state = LedgerDB.state()
+            Version(magic, version, Runtime.time(), nonce, UserAgent.string, minTxFee, ChainAnnounce(state.blockHash, state.cumulativeDifficulty))
+        }
         connection.sendPacket(v)
     }
 
@@ -306,6 +311,10 @@ object Node {
         return true
     }
 
+    private suspend fun getFilter(): HashSet<Address> {
+        return connections.map { it.remoteAddress }.plus(listenAddress.toList()).toHashSet()
+    }
+
     private suspend fun connector() {
         if (PeerDB.isLow()) {
             addBuiltinPeers()
@@ -318,9 +327,11 @@ object Node {
                 continue
             }
 
-            val filter = connections.map { it.remoteAddress }.plus(listenAddress.toList())
+            val filter = getFilter()
 
-            val addresses = PeerDB.getCandidates(n, filter)
+            val addresses = PeerDB.getCandidates(n) { address, _ ->
+                !filter.contains(address)
+            }
             if (addresses.isEmpty()) {
                 logger.info("Don't have candidates in PeerDB. ${outgoing()} connections, max ${Config.outgoingConnections}")
                 if (!addBuiltinPeers()) {
@@ -362,6 +373,28 @@ object Node {
             return true
         } else {
             return false
+        }
+    }
+
+    private suspend fun prober() {
+        delay(4 * 60)
+
+        if (PeerDB.size() < PeerDB.MAX_SIZE / 2)
+            return
+
+        if (outgoing() < Config.outgoingConnections)
+            return
+
+        val filter = getFilter()
+        val time = Runtime.time()
+        val address = PeerDB.getCandidates(1) { address, entry ->
+            (time > entry.lastTry + 4 * 60 * 60) && !filter.contains(address)
+        }.firstOrNull() ?: return
+
+        try {
+            connectTo(address, prober = true)
+        } catch (e: Throwable) {
+            PeerDB.failed(address, time)
         }
     }
 

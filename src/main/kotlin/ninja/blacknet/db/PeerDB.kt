@@ -36,7 +36,7 @@ private val logger = KotlinLogging.logger {}
 
 object PeerDB {
     const val DELAY = 60 * 60
-    private const val MAX_SIZE = 10000
+    const val MAX_SIZE = 10000
     private const val VERSION = 3
     private val peers = SynchronizedHashMap<Address, Entry>(MAX_SIZE)
     private val PEER_KEY = "peer".toByteArray()
@@ -125,12 +125,12 @@ object PeerDB {
         return peers.size() < 100
     }
 
-    suspend fun connected(address: Address, time: Long, userAgent: String) {
+    suspend fun connected(address: Address, time: Long, userAgent: String, prober: Boolean) {
         if (address.isLocal()) return
         peers.mutex.withLock {
             val entry = peers.map.get(address)
             if (entry != null)
-                entry.connected(time, userAgent)
+                entry.connected(time, userAgent, prober)
             else
                 peers.map.put(address, Entry.newConnected(time, userAgent))
         }
@@ -151,12 +151,12 @@ object PeerDB {
         return peers.filterToKeyList { address, entry -> address.port == Node.DEFAULT_P2P_PORT && entry.isReliable() }
     }
 
-    suspend fun getCandidates(n: Int, filter: List<Address>): List<Address> {
+    suspend fun getCandidates(n: Int, predicate: (Address, Entry) -> Boolean): List<Address> {
         val candidates = peers.mutex.withLock {
             val candidates = ArrayList<Pair<Address, Float>>(peers.map.size)
             val currTime = Runtime.time()
             peers.map.forEach { (address, entry) ->
-                if (!filter.contains(address))
+                if (predicate(address, entry))
                     candidates.add(Pair(address, entry.chance(currTime)))
             }
             candidates
@@ -292,7 +292,8 @@ object PeerDB {
             lastTry = time
         }
 
-        fun connected(time: Long, userAgent: String) {
+        @Suppress("UNUSED_PARAMETER")
+        fun connected(time: Long, userAgent: String, prober: Boolean) {
             if (stat != null) {
                 stat!!.lastConnected = time
                 stat!!.userAgent = userAgent
