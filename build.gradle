@@ -48,7 +48,6 @@ dependencies {
     implementation "org.iq80.leveldb:leveldb:0.12"
     implementation "org.slf4j:slf4j-jdk14:1.7.30"
     implementation "io.github.microutils:kotlin-logging:1.7.8"
-    implementation "org.briarproject:jtorctl:0.3"
     implementation "com.natpryce:konfig:1.6.10.0"
     implementation "com.google.guava:guava:28.2-jre"
     implementation "org.bitlet:weupnp:0.1.4"

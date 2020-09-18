@@ -33,9 +33,6 @@ MIT license: https://www.slf4j.org/license.html
 kotlin-logging https://github.com/MicroUtils/kotlin-logging is licensed under the
 Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0
 
-jtorctl https://github.com/akwizgran/jtorctl is licensed under the
-3-Clause BSD License: https://github.com/akwizgran/jtorctl/blob/master/LICENSE
-
 Konfig https://github.com/npryce/konfig is licensed under the
 Apache License 2.0: https://www.apache.org/licenses/LICENSE-2.0
 

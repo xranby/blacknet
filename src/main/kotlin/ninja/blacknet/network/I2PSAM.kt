@@ -16,6 +16,8 @@ import io.ktor.network.sockets.openWriteChannel
 import io.ktor.util.error
 import kotlinx.coroutines.io.ByteReadChannel
 import kotlinx.coroutines.io.ByteWriteChannel
+import kotlinx.coroutines.io.cancel
+import kotlinx.coroutines.io.close
 import kotlinx.coroutines.io.readUTF8Line
 import kotlinx.coroutines.io.writeStringUtf8
 import kotlinx.coroutines.launch
@@ -203,8 +205,10 @@ object I2PSAM {
             }
         }
 
-        private fun exception(message: String) {
+        private fun exception(message: String): Nothing {
             socket.close()
+            readChannel.cancel()
+            writeChannel.close()
             throw I2PException(message)
         }
     }

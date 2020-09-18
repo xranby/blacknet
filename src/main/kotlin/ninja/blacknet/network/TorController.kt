@@ -10,15 +10,24 @@
 package ninja.blacknet.network
 
 import io.ktor.util.error
+import io.ktor.network.sockets.ASocket
+import io.ktor.network.sockets.aSocket
+import io.ktor.network.sockets.openReadChannel
+import io.ktor.network.sockets.openWriteChannel
+import java.io.File
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.io.ByteReadChannel
+import kotlinx.coroutines.io.ByteWriteChannel
+import kotlinx.coroutines.io.cancel
+import kotlinx.coroutines.io.close
+import kotlinx.coroutines.io.readUTF8Line
+import kotlinx.coroutines.io.writeStringUtf8
 import mu.KotlinLogging
-import net.freehaven.tor.control.TorControlCommands
-import net.freehaven.tor.control.TorControlConnection
-import net.freehaven.tor.control.TorControlError
 import ninja.blacknet.Config
 import ninja.blacknet.Config.torcontrol
-import ninja.blacknet.util.emptyByteArray
 import org.bouncycastle.crypto.digests.SHA3Digest
-import java.io.File
+import ninja.blacknet.Runtime
 
 private val logger = KotlinLogging.logger {}
 
@@ -28,41 +37,86 @@ object TorController {
     init {
         try {
             val file = File(Config.dataDir, "privateKey.tor")
-            val lastModified = file.lastModified()
-            if (lastModified != 0L && lastModified < 1566666666000) {
-                if (file.renameTo(File(Config.dataDir, "privateKey.$lastModified.tor")))
-                    logger.info("Renamed private key file to privateKey.$lastModified.tor")
+            val readPrivateKey = file.readText()
+            if (readPrivateKey.startsWith("RSA1024:")) {
+                logger.info("Migration to Tor addresses version 3")
+                val newName = "privateKey.${Runtime.time()}.tor"
+                if (file.renameTo(File(Config.dataDir, newName)))
+                    logger.info("Renamed private key file to $newName")
             } else {
-                privateKey = file.readText()
+                privateKey = readPrivateKey
             }
         } catch (e: Throwable) {
         }
     }
 
-    fun listen(): Pair<Thread, Address> {
-        //TODO configure host
-        val s = java.net.Socket("localhost", Config[torcontrol].toPort().toPort())
-        val tor = TorControlConnection(s)
-        val thread = tor.launchThread(true)
-        //TODO cookie, password
-        tor.authenticate(emptyByteArray())
-
-        val request = HashMap<Int, String?>()
-        request[Config.netPort.toPort()] = null
-
-        val response = tor.addOnion(privateKey, request)
-        val string = response[TorControlCommands.HS_ADDRESS] ?: throw TorControlError("Failed to get address")
-        val address = Network.parse(string + Network.TOR_SUFFIX, Config.netPort) ?: throw TorControlError("Failed to parse address $string")
-
-        when (address.network) {
-            Network.TORv2, Network.TORv3 -> Unit
-            else -> throw TorControlError("Unknown network type ${address.network}")
+    class Connection(
+            val socket: ASocket,
+            val readChannel: ByteReadChannel,
+            val writeChannel: ByteWriteChannel
+    ) {
+        suspend fun authenticate() {
+            writeChannel.writeStringUtf8("AUTHENTICATE\r\n")
+            val replyLine = readChannel.readUTF8Line()
+            when (replyLine) {
+                "250 OK" -> Unit
+                null -> throw RuntimeException("Tor controller connection unexpectedly closed")
+                else -> throw RuntimeException("Unknown Tor reply line $replyLine")
+            }
         }
 
-        if (privateKey.startsWith("NEW:"))
-            savePrivateKey(response[TorControlCommands.HS_PRIVKEY] ?: throw TorControlError("Failed to get private key"))
+        suspend fun addOnion(): Pair<String?, String?> {
+            writeChannel.writeStringUtf8("ADD_ONION $privateKey Port=${Config.netPort.toPort()}\r\n")
+            var serviceID: String? = null
+            var newPrivateKey: String? = null
+            while (true) {
+                val replyLine = readChannel.readUTF8Line()
+                if (replyLine == null)
+                    throw RuntimeException("Tor controller connection unexpectedly closed")
+                else if (replyLine == "250 OK")
+                    break
+                else if (replyLine.startsWith("250-ServiceID="))
+                    serviceID = replyLine.drop(14)
+                else if (replyLine.startsWith("250-PrivateKey="))
+                    newPrivateKey = replyLine.drop(15)
+                else if (!replyLine.startsWith("250-"))
+                    throw RuntimeException("Unknown Tor reply line $replyLine")
+            }
+            return Pair(serviceID, newPrivateKey)
+        }
 
-        return Pair(thread, address)
+        fun close() {
+            socket.close()
+            readChannel.cancel()
+            writeChannel.close()
+        }
+
+        fun exception(message: String): Nothing {
+            close()
+            throw RuntimeException(message)
+        }
+    }
+
+    suspend fun listen(): Pair<Job, Address> {
+        //TODO configure host
+        val socket = aSocket(Network.selector).tcp().connect(Address.IPv4_LOOPBACK(Config[torcontrol].toPort()).getSocketAddress())
+        val connection = Connection(socket, socket.openReadChannel(), socket.openWriteChannel(true))
+        //TODO cookie, password
+        connection.authenticate()
+        val (serviceID, newPrivateKey) = connection.addOnion()
+        val address = Network.parse(serviceID + Network.TOR_SUFFIX, Config.netPort) ?: connection.exception("Failed to parse Onion Service ID $serviceID")
+        require(address.network == Network.TORv2 || address.network == Network.TORv3)
+
+        if (privateKey.startsWith("NEW:"))
+            savePrivateKey(newPrivateKey ?: connection.exception("Failed to get new private key"))
+
+        return Pair(Runtime.launch {
+            val replyLine = connection.readChannel.readUTF8Line()
+            if (replyLine != null)
+                connection.exception("Unknown Tor reply line $replyLine")
+            else
+                connection.close()
+        }, address)
     }
 
     private fun savePrivateKey(privKey: String) {
