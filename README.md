@@ -1,11 +1,10 @@
-## Blacknet Full Node Wallet
+## Blacknet Full Node Wallet  (黑网全节点钱包)
 
 [![Pipeline status][]](https://gitlab.com/blacknet-ninja/blacknet/pipelines)
 [![Web chat][]](https://app.element.io/#/group/+blacknet:matrix.org)
 [![Web site][]](https://blacknet.ninja)
 
-#### Blacknet is decentralized peer-to-peer network that secures public blockchain platform with proof of stake consensus.
-#### Blacknet是一种去中心化的点对点网络，通过权益证明共识(proof of stake)来保护的公共区块链平台。
+#### Blacknet is decentralized peer-to-peer network that secures public blockchain platform with proof of stake consensus. (Blacknet是一种去中心化的点对点网络，通过权益证明共识(proof of stake)来保护的公共区块链平台。)
 
 ## Get the source code (获取源代码)
 
