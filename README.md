@@ -49,7 +49,7 @@ This program is distributed under the terms of the Jelurida Public License
 version 1.1 for the Blacknet Public Blockchain Platform. See the [LICENSE][] file. 
 
 
-——————————————————————————————————————————————————————————————————————————————————————————————————
+# ——————————————————————————————————————————————————————
 
 
 ## 黑网全节点钱包
@@ -91,7 +91,7 @@ version 1.1 for the Blacknet Public Blockchain Platform. See the [LICENSE][] fil
 Gradle使用 `:run` 运行方式是支持的，但不建议使用
 
 
-## 如何作出贡献)
+## 如何作出贡献
 
 欢迎您报告理论或实践[Issue][]
 
@@ -100,6 +100,59 @@ Gradle使用 `:run` 运行方式是支持的，但不建议使用
 ## 许可信息
 
 Blacknet是根据Jelurida 1.1版公共许可证的条款发布的公共区块链平台。请参阅[LICENSE][]文件
+
+
+# ——————————————————————————————————————————————————————
+
+
+## ブラックネットウォレット
+
+[![Pipeline status][]](https://gitlab.com/blacknet-ninja/blacknet/pipelines)
+[![Web chat][]](https://app.element.io/#/group/+blacknet:matrix.org)
+[![Web site][]](https://blacknet.ninja)
+
+#### Blacknetは、株式のコンセンサスの証拠とパブリックブロックチェーンプラットフォームを確保する分散ピアツーピアネットワークです。
+
+## ソースコードを取得
+
+- [Release tags][]
+- `git clone https://gitlab.com/blacknet-ninja/blacknet.git`
+
+## 環境を設定
+
+Java JDKをインストールします,バージョン8以降.
+
+
+- Debian & Ubuntu: `sudo apt-get install default-jdk git`
+- Red Hat & Oracle: `sudo yum install java-11-openjdk git`
+- SUSE: `sudo zypper install java-11-openjdk git`
+- Arch GNU/Linux: `sudo pacman -S --needed jdk-openjdk git`
+- Gentoo: `sudo emerge -av1 --noreplace virtual/jdk dev-vcs/git`
+- FreeBSD: `sudo pkg install openjdk11 git`
+- OpenBSD: `sudo pkg_add jdk git`
+
+## コンパイル
+
+```
+./gradlew installDist
+```
+
+生成されたプログラムは `./build/install/`
+
+運転しますので、使ってください `./blacknet`, Windowsで使う `.\blacknet.bat`
+
+Gradle 使 `:run` 運行方式はサポートされていますが、推奨されていません.
+
+
+## どのように貢献しますか
+
+理論または実践を報告することを歓迎します. [Issue][]
+
+または変更します[Pull request][]
+
+## ライセンス情報
+
+Blacknet Jelurida 1.1版の公的許可証の条項に基づいて発行される公共ブロックチェーンプラットフォームです。[LICENSE][]ファイルを参照してください。
 
 
 [Issue]: https://gitlab.com/blacknet-ninja/blacknet/issues
