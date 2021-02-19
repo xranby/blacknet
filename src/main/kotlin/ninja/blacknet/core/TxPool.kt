@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");
@@ -9,15 +9,16 @@
 
 package ninja.blacknet.core
 
+import java.math.BigDecimal
 import kotlin.math.min
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import mu.KotlinLogging
 import ninja.blacknet.Config
 import ninja.blacknet.crypto.HashSerializer
+import ninja.blacknet.crypto.PoS
 import ninja.blacknet.db.LedgerDB
 import ninja.blacknet.db.WalletDB
-import ninja.blacknet.network.Node
 import ninja.blacknet.rpc.RPCServer
 import ninja.blacknet.serialization.bbf.binaryFormat
 import ninja.blacknet.util.HashMap
@@ -35,6 +36,7 @@ object TxPool : MemPool(), Ledger {
     private val htlcs = HashMap<ByteArray, HTLC?>()
     private val multisigs = HashMap<ByteArray, Multisig?>()
     private var transactions = ArrayList<ByteArray>(maxSeenSizeImpl())
+    internal var minFeeRate = parseAmount(Config.instance.minfeerate)
 
     suspend fun check(): Boolean = mutex.withLock {
         var result = true
@@ -92,7 +94,7 @@ object TxPool : MemPool(), Ledger {
     }
 
     override fun checkFee(size: Int, amount: Long): Boolean {
-        return amount >= Node.minFeeRate * (1 + size / 1000)
+        return amount >= minFeeRate * (1 + size / 1000)
     }
 
     override fun blockTime(): Long {
@@ -261,5 +263,9 @@ object TxPool : MemPool(), Ledger {
         return Pair(txs, map)
     }
 
-    // 復活
+    private fun parseAmount(string: String): Long {
+        val n = (BigDecimal(string) * BigDecimal(PoS.COIN)).longValueExact()
+        if (n < 0) throw RuntimeException("Negative amount")
+        return n
+    }
 }

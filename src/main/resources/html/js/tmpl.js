@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Blacknet Team
+ * Copyright (c) 2018-2020 Blacknet Team
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");

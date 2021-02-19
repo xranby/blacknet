@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  * Copyright (c) 2018 Blacknet Team
  *
  * Licensed under the Jelurida Public License version 1.1
@@ -22,6 +22,7 @@ import kotlin.system.exitProcess
 import kotlinx.coroutines.debug.DebugProbes
 import mu.KotlinLogging
 import ninja.blacknet.core.Staker
+import ninja.blacknet.core.TxPool
 import ninja.blacknet.db.*
 import ninja.blacknet.network.ChainFetcher
 import ninja.blacknet.network.Node
@@ -88,6 +89,7 @@ object Main {
         WalletDB
         LedgerDB
         PeerDB
+        TxPool
         Node
         Staker
 
@@ -106,7 +108,7 @@ object Main {
          * https://ktor.io/servers/engine.html
          *
          */
-        if (Config.instance.rpcserver_enabled) {
+        if (Config.instance.rpcserver) {
             embeddedServer(
                 Netty,
                 commandLineEnvironment(arrayOf("-config=${File(configDir,

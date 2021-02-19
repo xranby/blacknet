@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 Pavel Vasin
+ * Copyright (c) 2019-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");
@@ -183,7 +183,7 @@ object WalletDB {
     suspend fun getSequence(publicKey: ByteArray): Int = mutex.withLock {
         val wallet = getWalletImpl(publicKey)
         val seq = wallet.seq
-        return@withLock if (seq < Config.instance.wallet_seqthreshold)
+        return@withLock if (seq < Config.instance.seqthreshold)
             seq
         else
             throw RuntimeException("Wallet reached sequence threshold")

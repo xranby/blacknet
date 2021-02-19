@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  * Copyright (c) 2019 Blacknet Team
  *
  * Licensed under the Jelurida Public License version 1.1

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");
@@ -13,7 +13,6 @@ import io.ktor.network.sockets.ServerSocket
 import io.ktor.network.sockets.aSocket
 import io.ktor.network.sockets.openReadChannel
 import io.ktor.network.sockets.openWriteChannel
-import java.math.BigDecimal
 import java.math.BigInteger
 import java.net.InetSocketAddress
 import kotlin.random.Random
@@ -45,7 +44,6 @@ object Node {
     val nonce = Random.nextLong()
     val connections = SynchronizedArrayList<Connection>()
     val listenAddress = SynchronizedHashSet<Address>()
-    var minFeeRate = parseAmount(Config.instance.minfeerate)
     private val nextPeerId = atomic(1L)
 
     init {
@@ -186,7 +184,7 @@ object Node {
                     currentTimeSeconds(),
                     nonce,
                     UserAgent.string,
-                    minFeeRate,
+                    TxPool.minFeeRate,
                     ChainAnnounce(state.blockHash, state.cumulativeDifficulty)
             )
         })
@@ -385,11 +383,5 @@ object Node {
         } catch (e: Throwable) {
             PeerDB.failed(address, time / 1000L)
         }
-    }
-
-    private fun parseAmount(string: String): Long {
-        val n = (BigDecimal(string) * BigDecimal(PoS.COIN)).longValueExact()
-        if (n < 0) throw RuntimeException("Negative amount")
-        return n
     }
 }

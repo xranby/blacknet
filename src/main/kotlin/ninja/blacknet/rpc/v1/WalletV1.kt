@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2019 Pavel Vasin
+ * Copyright (c) 2019-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");

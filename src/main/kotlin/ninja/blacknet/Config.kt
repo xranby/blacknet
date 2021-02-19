@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");
@@ -9,7 +9,6 @@
 
 package ninja.blacknet
 
-import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
 import ninja.blacknet.crypto.PoS
 import ninja.blacknet.crypto.PrivateKeySerializer
@@ -37,19 +36,16 @@ class Config(
         val i2psamport: Int? = null,
         val dbcache: Size,
         var mnemonics: List<@Serializable(PrivateKeySerializer::class) ByteArray>? = null,
-        // 主從模式
+        // val master: String,
+        // val slave: String,
         val softblocksizelimit: Size = Size(PoS.MAX_BLOCK_SIZE),
         val txpoolsize: Size = Size(128 * 1024 * 1024),
         val logips: Boolean = false,
-        // 白名單
+        // val whitelist: Set<String>? = null,
         // val blacklist: Set<String>? = null,
         val debugcoroutines: Boolean = false,
-
-        @SerialName("rpcserver.enabled")
-        val rpcserver_enabled: Boolean = true,
-
-        @SerialName("wallet.seqthreshold")
-        val wallet_seqthreshold: Int = Int.MAX_VALUE - 1,
+        val rpcserver: Boolean = true,
+        val seqthreshold: Int = Int.MAX_VALUE - 1,
 ) {
     companion object {
         val instance = ConfigFormat(serializersModule = textModule).decodeFromFile(serializer(), "blacknet.conf").also {
