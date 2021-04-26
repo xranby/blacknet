@@ -8,7 +8,9 @@
 # See the LICENSE.txt file at the top-level directory of this distribution.
 #
 
-image: openjdk:latest
+# Gradle 7.0
+# image: openjdk:latest
+image: openjdk:15
 
 include:
   # GradleProperties has not been loaded yet.
