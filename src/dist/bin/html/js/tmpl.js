@@ -27,6 +27,9 @@ Blacknet.template = {
             amount = tx.fee;
             txfee = '';
         }
+        if (dataType == 11) {
+            amount = txData.withdraw;
+        }
         if (dataType == 0 && tx.from == account) {
             txaccount = txData.to;
         }
