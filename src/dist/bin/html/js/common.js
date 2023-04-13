@@ -21,10 +21,10 @@ void function () {
     const txList = $('#tx-list');
 
     Blacknet.explorer = {
-        block: 'https://blnscan.io/',
-        blockHeight: 'https://blnscan.io/',
-        tx: 'https://blnscan.io/',
-        account: 'https://blnscan.io/'
+        block: 'https://blnexplorer.io/',
+        blockHeight: 'https://blnexplorer.io/',
+        tx: 'https://blnexplorer.io/',
+        account: 'https://blnexplorer.io/'
     };
 
     if (localStorage.explorer) {
