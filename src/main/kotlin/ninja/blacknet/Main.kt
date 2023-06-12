@@ -39,6 +39,10 @@ object Main {
         LogManager.getLogManager().readConfiguration(inStream)
         inStream.close()
 
+        Thread.currentThread().setUncaughtExceptionHandler { _, e ->
+            logger.error(e)
+        }
+
         logger.info("Starting ${Version.name} node")
         logger.info("CPU: ${Runtime.availableProcessors} cores ${System.getProperty("os.arch")}")
         logger.info("OS: ${System.getProperty("os.name")} ${System.getProperty("os.version")}")
