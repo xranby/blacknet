@@ -39,7 +39,8 @@ object Main {
         LogManager.getLogManager().readConfiguration(inStream)
         inStream.close()
 
-        Thread.currentThread().setUncaughtExceptionHandler { _, e ->
+        // exceptions from coroutines should end up here too
+        Thread.setDefaultUncaughtExceptionHandler { _, e ->
             logger.error(e)
         }
 
