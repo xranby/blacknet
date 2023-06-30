@@ -74,6 +74,8 @@ class GetBlocks(
             if (bytes == null)
                 break
             response.add(SerializableByteArray(bytes))
+            if (response.size == Blocks.MAX_BLOCKS)
+                break
             chainIndex = LedgerDB.getChainIndex(hash)
         }
 
