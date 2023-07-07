@@ -56,6 +56,13 @@ object Staker /* Holder */ {
     }
 
     private val stakers = SynchronizedArrayList<StakerState>()
+    private var state: String = "Initializing staker"
+        set(value) {
+            if (field === value)
+                return
+            field = value
+            logger.info(value)
+        }
 
     init {
         if (Config.contains(mnemonics)) {
@@ -68,11 +75,6 @@ object Staker /* Holder */ {
                         logger.warn("Invalid mnemonic $index")
                     }
                 }
-                val n = stakers.list.size
-                if (n == 1)
-                    logger.info("Started staking")
-                else if (n > 1)
-                    logger.info("Started staking with $n accounts")
             }
         }
     }
@@ -82,12 +84,18 @@ object Staker /* Holder */ {
         delay(1)
 
         if (!Config.regTest) {
-            if (Node.isOffline())
+            if (Node.isOffline()) {
+                state = "Awaiting to get online"
                 return
+            }
 
-            if (Node.isInitialSynchronization())
+            if (Node.isInitialSynchronization()) {
+                state = "Awaiting to get synchronized"
                 return
+            }
         }
+
+        state = "Staking"
 
         var state = LedgerDB.state()
         val currTime = Runtime.time()
@@ -157,6 +165,7 @@ object Staker /* Holder */ {
         stakers.list.add(staker)
         if (stakers.list.size == 1) {
             job = Runtime.rotate(::implementation)
+            state = "Started staker"
         }
         return true
     }
@@ -173,6 +182,7 @@ object Staker /* Holder */ {
         if (stakers.list.size == 0) {
             job!!.cancel()
             job = null
+            state = "Stopped staker"
         }
         return true
     }
