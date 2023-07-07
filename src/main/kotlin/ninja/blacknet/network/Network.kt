@@ -91,7 +91,7 @@ enum class Network(val type: Byte, val addrSize: Int) {
             return when (bytes.size) {
                 IPv6.addrSize -> Address(IPv6, port, bytes)
                 IPv4.addrSize -> Address(IPv4, port, bytes)
-                else -> throw RuntimeException("Unknown ip address type")
+                else -> throw RuntimeException("Unknown IP address length ${bytes.size}")
             }
         }
 
