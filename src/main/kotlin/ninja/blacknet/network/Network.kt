@@ -111,7 +111,7 @@ enum class Network(val type: Byte, val addrSize: Int) {
                         return Connection(socket, socket.openReadChannel(), socket.openWriteChannel(true), address, localAddress, state)
                     }
                 }
-                TORv2, TORv3 -> {
+                TORv3 -> {
                     if (torProxy == null) throw RuntimeException("Tor proxy is not set")
                     val c = Socks5.connect(torProxy, address)
                     return Connection(c.socket, c.readChannel, c.writeChannel, address, torProxy, state)
@@ -119,6 +119,9 @@ enum class Network(val type: Byte, val addrSize: Int) {
                 I2P -> {
                     val c = I2PSAM.connect(address)
                     return Connection(c.socket, c.readChannel, c.writeChannel, address, I2PSAM.session().second, state)
+                }
+                TORv2 -> {
+                    throw RuntimeException("${address.network} is obsolete")
                 }
             }
         }
