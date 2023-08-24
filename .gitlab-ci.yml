@@ -15,7 +15,6 @@ image: openjdk:15
 include:
   # GradleProperties has not been loaded yet.
   # - template: Dependency-Scanning.gitlab-ci.yml
-  - template: License-Scanning.gitlab-ci.yml
   # Try again later.
   # - template: SAST.gitlab-ci.yml
   # - template: DAST.gitlab-ci.yml
@@ -31,15 +30,17 @@ cache:
     - .gradle/caches
 
 stages:
-  - license_scanning
+#FIXME report is empty
+#TODO how to properly upload report for gitlab ui?
+#  - license_scanning
   - test
   - build
 
-license_scanning:
-  stage: license_scanning
-  artifacts:
-    reports:
-      license_scanning: gl-license-scanning-report.json
+#license_scanning:
+#  stage: license_scanning
+#  artifacts:
+#    reports:
+#      license_scanning: gl-license-scanning-report.json
 
 test:
   stage: test
