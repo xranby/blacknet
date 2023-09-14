@@ -409,6 +409,10 @@ fun Application.APIServer() {
             }
         }
 
+        get("/api/v2/blockdb/check") {
+            call.respond(Json.stringify(BlockDB.Check.serializer(), BlockDB.check()))
+        }
+
         get("/api/v2/blockhash/{height}") {
             val height = call.parameters["height"]?.toIntOrNull() ?: return@get call.respond(HttpStatusCode.BadRequest, "Invalid height")
 

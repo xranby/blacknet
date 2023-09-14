@@ -11,6 +11,7 @@ package ninja.blacknet.db
 
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.Serializable
 import mu.KotlinLogging
 import ninja.blacknet.Config
 import ninja.blacknet.api.APIServer
@@ -18,6 +19,7 @@ import ninja.blacknet.core.*
 import ninja.blacknet.crypto.Hash
 import ninja.blacknet.crypto.PoS
 import ninja.blacknet.db.LedgerDB.forkV2
+import ninja.blacknet.util.startsWith
 import java.util.Collections
 
 private val logger = KotlinLogging.logger {}
@@ -135,4 +137,36 @@ object BlockDB {
 
         return emptyList()
     }
+
+    suspend fun check(): Check = mutex.withLock {
+        val result = Check(false, LedgerDB.state().height, 0, 0)
+        val iterator = LevelDB.iterator()
+        if (LevelDB.seek(iterator, LedgerDB.CHAIN_KEY)) {
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (entry.key.startsWith(LedgerDB.CHAIN_KEY))
+                    result.indexes += 1
+            }
+        }
+        if (LevelDB.seek(iterator, BLOCK_KEY)) {
+            while (iterator.hasNext()) {
+                val entry = iterator.next()
+                if (entry.key.startsWith(BLOCK_KEY))
+                    result.blocks += 1
+            }
+        }
+        iterator.close()
+        // genesis is not in blocks, but is in indexes
+        if (result.height + 1 == result.indexes && result.height == result.blocks)
+            result.result = true
+        return@withLock result
+    }
+
+    @Serializable
+    class Check(
+        var result: Boolean,
+        val height: Int,
+        var indexes: Int,
+        var blocks: Int
+    )
 }

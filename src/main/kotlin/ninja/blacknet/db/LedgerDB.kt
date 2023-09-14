@@ -37,7 +37,7 @@ private val logger = KotlinLogging.logger {}
 object LedgerDB {
     private const val VERSION = 8
     private val ACCOUNT_KEY = "account".toByteArray()
-    private val CHAIN_KEY = "chain".toByteArray()
+    internal val CHAIN_KEY = "chain".toByteArray()
     private val HTLC_KEY = "htlc".toByteArray()
     private val MULTISIG_KEY = "multisig".toByteArray()
     private val UNDO_KEY = "undo".toByteArray()
