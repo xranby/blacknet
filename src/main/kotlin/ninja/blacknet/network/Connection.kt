@@ -69,6 +69,8 @@ class Connection(
     @Volatile
     var lastInvSentTime: Long = 0
     @Volatile
+    var timeOffset: Long = 0
+    @Volatile
     var ping: Long = 0
     @Volatile
     internal var pingRequest: Pair<Int, Long>? = null
@@ -79,7 +81,6 @@ class Connection(
     var version: Int = 0
     var agent: String = ""
     var feeFilter: Long = 0
-    var timeOffset: Long = 0
 
     fun launch() {
         pinger = Runtime.launch { pinger() }
@@ -308,7 +309,10 @@ class Connection(
     private fun sendPing() {
         val challenge = Random.nextInt()
         pingRequest = Pair(challenge, Runtime.timeMilli())
-        sendPacket(Ping(challenge))
+        if (version >= Ping.MIN_VERSION)
+            sendPacket(Ping(challenge, Runtime.time()))
+        else
+            sendPacket(PingV1(challenge))
     }
 
     private suspend fun peerAnnouncer() {

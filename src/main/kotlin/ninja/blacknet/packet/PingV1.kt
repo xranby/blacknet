@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2023 Pavel Vasin
+ * Copyright (c) 2018-2020 Pavel Vasin
  *
  * Licensed under the Jelurida Public License version 1.1
  * for the Blacknet Public Blockchain Platform (the "License");
@@ -12,25 +12,21 @@ package ninja.blacknet.packet
 import com.google.common.primitives.Ints
 import kotlinx.io.core.ByteReadPacket
 import kotlinx.serialization.Serializable
-import ninja.blacknet.Runtime
+import ninja.blacknet.crypto.Blake2b
 import ninja.blacknet.network.Connection
 import ninja.blacknet.network.Node
 import ninja.blacknet.serialization.BinaryEncoder
 
 @Serializable
-class Ping(
-    private val challenge: Int,
-    private val time: Long
+class PingV1(
+    val challenge: Int
 ) : Packet {
     override fun serialize(): ByteReadPacket = BinaryEncoder.toPacket(serializer(), this)
 
-    override fun getType() = PacketType.Ping
+    override fun getType() = PacketType.PingV1
 
     override suspend fun process(connection: Connection) {
-        connection.timeOffset = time - Runtime.time()
-
-        connection.sendPacket(Pong(solve(challenge)))
-
+        connection.sendPacket(Pong(if (connection.version == 13) solveV1(challenge) else challenge))
         val lastPacketTime = connection.lastPacketTime
         val lastPingTime = connection.lastPingTime
         connection.lastPingTime = lastPacketTime
@@ -39,12 +35,9 @@ class Ping(
         else
             connection.dos("Too many ping requests")
     }
-
-    companion object {
-        const val MIN_VERSION = 14
-    }
 }
 
-fun solve(challenge: Int): Int {
-    return challenge xor Node.magic
+fun solveV1(challenge: Int): Int {
+    val hash = Blake2b.hasher { this + Node.magic + challenge }
+    return Ints.fromBytes(hash.bytes[0], hash.bytes[1], hash.bytes[2], hash.bytes[3])
 }
