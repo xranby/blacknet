@@ -47,7 +47,7 @@ class Version(
         connection.lastChain = chainAnnounce
 
         if (version < Node.minVersion) {
-            logger.info("Obsolete protocol version $version ${connection.debugName()} $agent")
+            logger.info("Obsolete protocol version $version ${connection.debugName()} ${connection.agent}")
             connection.close()
             return
         }
@@ -55,14 +55,14 @@ class Version(
         if (connection.state == Connection.State.INCOMING_WAITING) {
             if (nonce != Node.nonce) {
                 Node.sendVersion(connection, nonce, prober = false)
-                logger.info("Accepted connection from ${connection.debugName()} $agent")
+                logger.info("Accepted connection from ${connection.debugName()} ${connection.agent}")
                 connection.state = Connection.State.INCOMING_CONNECTED
             } else {
                 connection.close()
                 return
             }
         } else if (connection.state == Connection.State.OUTGOING_WAITING) {
-            logger.info("Connected to ${connection.debugName()} $agent")
+            logger.info("Connected to ${connection.debugName()} ${connection.agent}")
             connection.state = Connection.State.OUTGOING_CONNECTED
             PeerDB.connected(connection.remoteAddress, connection.connectedAt, connection.agent, prober = false)
         } else if (connection.state == Connection.State.PROBER_WAITING) {
