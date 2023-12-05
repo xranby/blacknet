@@ -68,7 +68,7 @@ object PoS {
     fun maxBlockSize(blockSizes: Collection<Int>): Int {
         return if (blockSizes.size == BLOCK_SIZE_SPAN) {
             val iterator = blockSizes.iterator()
-            val sizes = Array(BLOCK_SIZE_SPAN) { iterator.next() }
+            val sizes = IntArray(BLOCK_SIZE_SPAN) { iterator.next() }
             sizes.sort()
             val median = sizes[BLOCK_SIZE_SPAN / 2]
             val size = median * 2
