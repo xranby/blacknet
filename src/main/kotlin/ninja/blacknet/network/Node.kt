@@ -227,14 +227,22 @@ object Node {
     }
 
     private suspend fun timeOffset(): Long = connections.mutex.withLock {
-        val size = connections.list.size
-        return if (size >= 5) {
-            val offsets = Array(size) { connections.list[it].timeOffset }
-            offsets.sort()
-            val median = offsets[size / 2]
-            median
-        } else {
-            0
+        Config.outgoingConnections.let { min ->
+            connections.list.fold(
+                ArrayList<Long>(min)
+            ) { accumulator, element ->
+                accumulator.apply {
+                    if (element.state == Connection.State.OUTGOING_CONNECTED)
+                        add(element.timeOffset)
+                }
+            }.run {
+                if (size >= min) {
+                    sort()
+                    this[size / 2] // median
+                } else {
+                    0
+                }
+            }
         }
     }
 
