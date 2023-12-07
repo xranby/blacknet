@@ -1,6 +1,8 @@
+104.129.180.157
 125.228.69.196
 176.31.180.193
 192.99.68.69
+193.151.181.116
 2001:19f0:8001:1a32:5400:1ff:fedf:59d3
 2001:41d0:8:ebc1:0:0:0:1
 2001:b011:7007:2cb0:49f:654c:3350:e120
@@ -22,6 +24,13 @@
 2a02:c207:2021:5066:0:0:0:1
 2a02:c207:2022:1374:0:0:0:1
 5.189.152.114
+79.191.73.139
+85.130.184.38
 89.244.191.103
 94.130.50.254
+94.173.34.116
+95.217.61.212
+qnadnipkv4rdtdumc4zw4abicegwiljp2uzdk6mrw5hr2ipmdycopqid.onion
 sne4v3crzceqyk6hklavn4yk2iy7wijit4rdxc3as35onapef7lnaeid.onion
+uho2yqovxw7uyzmjycyys64w25n2u25arbfkpm4r5g7hcszrhaea.b32.i2p
+wibhx6ok2mn53j2pagjvhesfet2c2s7umxo76y4ty5ubcghtwivq.b32.i2p
