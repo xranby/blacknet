@@ -77,7 +77,8 @@ object I2PSAM {
 
         val sessionId = generateId()
 
-        val answer = request(connection, "SESSION CREATE STYLE=STREAM ID=$sessionId DESTINATION=$privateKey SIGNATURE_TYPE=EdDSA_SHA512_Ed25519\n")
+        // i2cp.leaseSetEncType 0 for connectivity with [Node.PROTOCOL_VERSION] <= 15
+        val answer = request(connection, "SESSION CREATE STYLE=STREAM ID=$sessionId DESTINATION=$privateKey SIGNATURE_TYPE=EdDSA_SHA512_Ed25519 i2cp.leaseSetEncType=4,0\n")
         connection.checkResult(answer)
         val privateKey = getValue(answer, "DESTINATION") ?: throw I2PException("invalid response")
 
