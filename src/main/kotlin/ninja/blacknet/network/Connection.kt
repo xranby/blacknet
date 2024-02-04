@@ -285,25 +285,32 @@ class Connection(
 
         if (state.isConnected()) {
             delay(Random.nextInt(Node.NETWORK_TIMEOUT))
-            sendPing()
+            pingPong()
         } else {
             close()
             return
         }
 
         while (true) {
-            delay(Node.NETWORK_TIMEOUT)
-
-            if (pingRequest == null) {
-                if (Runtime.time() > lastPacketTime + Node.NETWORK_TIMEOUT) {
-                    sendPing()
-                }
+            val currTime = Runtime.time()
+            val nextPing = lastPacketTime + Node.NETWORK_TIMEOUT
+            val d = nextPing - currTime
+            if (d > 0) {
+                delay(d.toInt())
+                continue
             } else {
-                logger.info("Disconnecting ${debugName()} on ping timeout")
-                close()
-                return
+                pingPong()
             }
         }
+    }
+
+    private suspend fun pingPong() {
+        sendPing()
+        delay(Node.NETWORK_TIMEOUT)
+        if (pingRequest == null)
+            return
+        logger.info { "Disconnecting ${debugName()} on ping timeout" }
+        close()
     }
 
     private fun sendPing() {
