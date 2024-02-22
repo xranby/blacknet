@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2018-2019 Pavel Vasin
+ * Copyright (c) 2018-2024 Pavel Vasin
  * Copyright (c) 2018 Blacknet Team
  *
  * Licensed under the Jelurida Public License version 1.1
@@ -127,7 +127,7 @@ object PeerDB {
     }
 
     suspend fun connected(address: Address, time: Long, userAgent: String, prober: Boolean) {
-        if (address.isLocal()) return
+        if (address.isLocal() || address.isPrivate()) return
         peers.mutex.withLock {
             val entry = peers.map.get(address)
             if (entry != null)
@@ -207,9 +207,7 @@ object PeerDB {
     }
 
     private fun addImpl(peer: Address, from: Address): Boolean {
-        if (peer.isLocal())
-            return false
-        if (peer.isPrivate())
+        if (peer.isLocal() || peer.isPrivate())
             return false
         if (peer.network == Network.TORv2) // obsolete
             return false
