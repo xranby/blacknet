@@ -155,14 +155,13 @@ object Node {
         listenOn(Address.IPv4_ANY(Config.netPort))
     }
 
-    suspend fun connectTo(address: Address, prober: Boolean = false): Connection {
+    suspend fun connectTo(address: Address, prober: Boolean = false) {
         val connection = Network.connect(address, prober)
         connections.mutex.withLock {
             connections.list.add(connection)
             connection.launch()
         }
         sendVersion(connection, nonce(address.network), prober)
-        return connection
     }
 
     fun sendVersion(connection: Connection, nonce: Long, prober: Boolean) {
@@ -354,13 +353,10 @@ object Node {
 
             addresses.forEach { address ->
                 Runtime.launch {
-                    var connection: Connection? = null
                     try {
-                        connection = connectTo(address)
+                        connectTo(address)
                     } catch (e: Throwable) {
-                    } finally {
-                        if (connection == null || connection.state == Connection.State.OUTGOING_WAITING)
-                            PeerDB.failed(address, currTime)
+                        PeerDB.failed(address, currTime)
                     }
                 }
             }
@@ -403,13 +399,10 @@ object Node {
             (time > entry.lastTry + 4 * 60 * 60) && !filter.contains(address)
         }.firstOrNull() ?: return
 
-        var connection: Connection? = null
         try {
-            connection = connectTo(address, prober = true)
+            connectTo(address, prober = true)
         } catch (e: Throwable) {
-        } finally {
-            if (connection == null || connection.state == Connection.State.PROBER_WAITING)
-                PeerDB.failed(address, time)
+            PeerDB.failed(address, time)
         }
     }
 
