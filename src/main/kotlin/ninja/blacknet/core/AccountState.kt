@@ -109,7 +109,7 @@ class AccountState(
     }
 
     @Serializable
-    class Lease(val publicKey: PublicKey, val height: Int, var amount: Long) {
+    class Lease(val publicKey: PublicKey, var height: Int, var amount: Long) {
         override fun equals(other: Any?): Boolean = (other is Lease) && publicKey == other.publicKey && height == other.height && amount == other.amount
         override fun hashCode(): Int = publicKey.hashCode() xor height xor amount.hashCode()
         fun copy(): Lease = Lease(publicKey, height, amount)
