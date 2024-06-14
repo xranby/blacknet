@@ -44,7 +44,7 @@ object Staker /* Holder */ {
         fun hashRate(): Double {
             val time = Runtime.timeMilli() - startTime
             return if (time != 0L)
-                hashCounter.toDouble() / (time / 1000)
+                hashCounter.toDouble() / (time.toDouble() / 1000)
             else
                 0.0
         }
