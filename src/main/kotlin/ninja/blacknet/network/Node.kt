@@ -236,7 +236,7 @@ object Node {
                         add(element.timeOffset)
                 }
             }.run {
-                if (size >= min) {
+                if (size > 0 && size >= min) {
                     sort()
                     this[size / 2] // median
                 } else {
