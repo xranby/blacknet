@@ -163,7 +163,9 @@ void function () {
 
     Blacknet.renderProgressBar = async function (timestamp) {
 
-        let secs = Date.now() / 1000 - timestamp, totalSecs, pecent, timeBehindText = "", now = Date.now();
+        let now = Date.now();
+        let secs = now / 1000 - timestamp;
+        let totalSecs, pecent, timeBehindText = "";
         let HOUR_IN_SECONDS = 60 * 60;
         let DAY_IN_SECONDS = 24 * 60 * 60;
         let WEEK_IN_SECONDS = 7 * 24 * 60 * 60;
@@ -178,9 +180,9 @@ void function () {
         } else if (secs < YEAR_IN_SECONDS) {
             timeBehindText = (secs / WEEK_IN_SECONDS).toFixed(2) + " week(s)";
         } else {
-            let years = secs / YEAR_IN_SECONDS;
-            let remainder = secs % YEAR_IN_SECONDS;
-            timeBehindText = years.toFixed(2) + " year(s) and " + remainder.toFixed(2) + "week(s)";
+            let years = ~~(secs / YEAR_IN_SECONDS); // ~~() is an optimized Math.floor()
+            let weeks = ( secs % YEAR_IN_SECONDS ) / WEEK_IN_SECONDS;
+            timeBehindText = years + " year(s) and " + weeks.toFixed(2) + " week(s)";
         }
 
         if (!Blacknet.startTime) {
@@ -193,7 +195,7 @@ void function () {
             return;
         }
 
-        totalSecs = Date.now() / 1000 - Blacknet.startTime;
+        totalSecs = now / 1000 - Blacknet.startTime;
         pecent = (secs * 100) / totalSecs;
 
         pecent = 100 - pecent;
