@@ -1,6 +1,6 @@
 #!/bin/false
 #
-# Copyright (c) 2020 Pavel Vasin
+# Copyright (c) 2020-2025 Pavel Vasin
 #
 # Licensed under the Jelurida Public License version 1.1
 # for the Blacknet Public Blockchain Platform (the "License");
@@ -8,9 +8,7 @@
 # See the LICENSE.txt file at the top-level directory of this distribution.
 #
 
-# Gradle 7.0
-# image: openjdk:latest
-image: openjdk:15
+image: eclipse-temurin:17.0.14_7-jdk@sha256:1ebe50132ef974b48c850acf45f15be971b28d7a4d2c85849ceb26d782e74983
 
 include:
   # GradleProperties has not been loaded yet.
