@@ -23,72 +23,12 @@
 
 namespace blacknet::crypto {
 
-// Speeding up the computations on an elliptic curve using addition-subtraction chains
-// ADDSUBCHAIN-D
-// http://www.numdam.org/item/ITA_1990__24_6_531_0/
-
-namespace abeliangroup {
-
-template<typename AG, typename Scalar>
-constexpr AG multiply(const AG& e, const Scalar& s) {
-    AG P(AG::additive_identity());
-    AG Q(e);
-
-    int QisQdouple = 0;
-    int state = 0;
-
-    auto updateQ = [&Q, &QisQdouple]() {
-        for (int i = 0; i < QisQdouple; ++i) {
-            Q = Q.douple();
-        }
-        QisQdouple = 0;
-    };
-
-    std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
-        switch(state){
-            case 0:
-                if(bit) {
-                    state = 1;
-                } else {
-                    QisQdouple += 1;
-                }
-                break;
-            case 1:
-                // Q only needs to be updated in case P gets updated
-                updateQ();
-                if(bit) {
-                    P = P - Q;
-                    QisQdouple += 2;
-                    state = 11;
-                } else {
-                    P = P + Q;
-                    QisQdouple += 2;
-                    state = 0;
-                }
-                break;
-            case 11:
-                if(bit) {
-                    QisQdouple += 1;
-                } else {
-                    state = 1;
-                }
-                break;
-        }
-    });
-
-    if(state!=0){
-        // Q only needs to be updated in case P gets updated
-        updateQ();
-        P = P + Q;
-    }
-
-    return P;
-}
-
 /*
  * ADDSUBCHAIN-E: Optimized for low-degree multilinear polynomials
  * Prioritizing simple constraints over aggressive batching
  */
+
+namespace abeliangroup {
 
 // Simple constraint types that translate to low-degree polynomials
 template<typename AG>
@@ -206,6 +146,20 @@ public:
         return constraints;
     }
 };
+
+// Primary scalar multiplication function using ADDSUBCHAIN-E
+template<typename AG, typename Scalar>
+constexpr AG multiply(const AG& e, const Scalar& s) {
+    MultilinearScalarMult<AG, Scalar> mult;
+    auto constraints = mult.multiply_to_constraints(e, s);
+    
+    // Execute the final constraint to get the result
+    if (!constraints.empty()) {
+        return constraints.back().output;
+    }
+    
+    return AG::additive_identity();
+}
 
 // Multilinear polynomial representation for proof systems
 template<typename Field>
