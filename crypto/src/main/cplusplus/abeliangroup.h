@@ -1085,7 +1085,7 @@ public:
                         
                         // Actual point operations require full field arithmetic
                         auto field_ops = perform_point_operations(P, Q, true, QisQdouble);
-                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        cs.field_constraints.push_back(field_ops);
                         
                         P = P - Q;
                         QisQdouble = 2;
@@ -1094,7 +1094,7 @@ public:
                         cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
                         
                         auto field_ops = perform_point_operations(P, Q, false, QisQdouble);
-                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        cs.field_constraints.push_back(field_ops);
                         
                         P = P + Q;
                         QisQdouble = 2;
@@ -1111,12 +1111,12 @@ public:
                         for (int i = 0; i < QisQdouble; ++i) {
                             Q = Q.douple();
                             auto field_ops = perform_doubling_operations(Q);
-                            cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                            cs.field_constraints.push_back(field_ops);
                         }
                         
                         cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
                         auto field_ops = perform_point_operations(P, Q, false, 0);
-                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        cs.field_constraints.push_back(field_ops);
                         
                         P = P + Q;
                         QisQdouble = 2;
@@ -1132,11 +1132,11 @@ public:
             for (int i = 0; i < QisQdouble; ++i) {
                 Q = Q.douple();
                 auto field_ops = perform_doubling_operations(Q);
-                cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                cs.field_constraints.push_back(field_ops);
             }
             
             auto field_ops = perform_point_operations(P, Q, false, 0);
-            cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+            cs.field_constraints.push_back(field_ops);
             P = P + Q;
         }
         
@@ -1265,7 +1265,7 @@ class StreamingMultilinearMult {
     // Perfect for STARK-style systems with streaming verification
     
 public:
-    constexpr static size_t CHUNK_SIZE = 4; // Process 4 bits at a time
+    constexpr static size_t CHUNK_SIZE = 64; // Process larger chunks to ensure equivalent work
     
     struct ChunkConstraints {
         std::vector<SimpleConstraint<AG>> constraints;
@@ -1352,8 +1352,8 @@ public:
             
             bit_count++;
             
-            // Complete chunk when we reach CHUNK_SIZE bits or significant computation
-            if (bit_count % CHUNK_SIZE == 0 || current_chunk.constraints.size() >= 8) {
+            // Complete chunk when we reach CHUNK_SIZE bits (not early completion)
+            if (bit_count % CHUNK_SIZE == 0) {
                 current_chunk.output_point = P;
                 chunks.push_back(current_chunk);
                 

@@ -114,13 +114,36 @@ static void BM_EllipticCurveMultilinearConstraints(benchmark::State& state) {
     auto a = ECG::random(rng);
     auto b = ECG::Scalar::random(rng);
     
+    std::size_t total_constraints = 0;
+    std::size_t total_operations = 0;
+    
     for (auto _ : state) {
         abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
         auto simple_constraints = mult.multiply_to_constraints(a, b);
         
+        total_constraints += simple_constraints.size();
+        
+        // Count actual elliptic curve operations
+        for (const auto& constraint : simple_constraints) {
+            switch(constraint.type) {
+                case abeliangroup::SimpleConstraint<ECG>::POINT_ADD:
+                case abeliangroup::SimpleConstraint<ECG>::POINT_SUB:
+                case abeliangroup::SimpleConstraint<ECG>::POINT_DOUBLE:
+                    total_operations++;
+                    break;
+                default:
+                    break;
+            }
+        }
+        
         benchmark::DoNotOptimize(simple_constraints);
         benchmark::ClobberMemory();
     }
+    
+    state.counters["ConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_constraints) / state.iterations());
+    state.counters["OperationsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_operations) / state.iterations());
 }
 BENCHMARK(BM_EllipticCurveMultilinearConstraints<PallasGroupJacobian>);
 BENCHMARK(BM_EllipticCurveMultilinearConstraints<Edwards25519GroupExtended>);
@@ -130,15 +153,32 @@ static void BM_EllipticCurveNeoConstraints(benchmark::State& state) {
     auto a = ECG::random(rng);
     auto b = ECG::Scalar::random(rng);
     
+    std::size_t total_bit_constraints = 0;
+    std::size_t total_field_constraints = 0;
+    std::size_t total_small_field_constraints = 0;
+    
     for (auto _ : state) {
         abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
         auto bit_granular_cs = neo_mult.generate_constraint_system(a, b);
+        
+        total_bit_constraints += bit_granular_cs.bit_constraints.size();
+        total_field_constraints += bit_granular_cs.field_constraints.size();
+        total_small_field_constraints += bit_granular_cs.small_field_constraints.size();
         
         benchmark::DoNotOptimize(bit_granular_cs.bit_constraints);
         benchmark::DoNotOptimize(bit_granular_cs.field_constraints);
         benchmark::DoNotOptimize(bit_granular_cs.small_field_constraints);
         benchmark::ClobberMemory();
     }
+    
+    state.counters["BitConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_bit_constraints) / state.iterations());
+    state.counters["FieldConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_field_constraints) / state.iterations());
+    state.counters["SmallFieldConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_small_field_constraints) / state.iterations());
+    state.counters["TotalConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_bit_constraints + total_field_constraints + total_small_field_constraints) / state.iterations());
 }
 BENCHMARK(BM_EllipticCurveNeoConstraints<PallasGroupJacobian>);
 BENCHMARK(BM_EllipticCurveNeoConstraints<Edwards25519GroupExtended>);
@@ -148,13 +188,44 @@ static void BM_EllipticCurveStreamingConstraints(benchmark::State& state) {
     auto a = ECG::random(rng);
     auto b = ECG::Scalar::random(rng);
     
+    std::size_t total_chunks = 0;
+    std::size_t total_constraints = 0;
+    std::size_t total_operations = 0;
+    
     for (auto _ : state) {
         abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> streaming_mult;
         auto chunk_constraints = streaming_mult.process_in_chunks(a, b);
         
+        total_chunks += chunk_constraints.size();
+        
+        // Count constraints across all chunks
+        for (const auto& chunk : chunk_constraints) {
+            total_constraints += chunk.constraints.size();
+            
+            // Count actual elliptic curve operations
+            for (const auto& constraint : chunk.constraints) {
+                switch(constraint.type) {
+                    case abeliangroup::SimpleConstraint<ECG>::POINT_ADD:
+                    case abeliangroup::SimpleConstraint<ECG>::POINT_SUB:
+                    case abeliangroup::SimpleConstraint<ECG>::POINT_DOUBLE:
+                        total_operations++;
+                        break;
+                    default:
+                        break;
+                }
+            }
+        }
+        
         benchmark::DoNotOptimize(chunk_constraints);
         benchmark::ClobberMemory();
     }
+    
+    state.counters["ChunksPerIter"] = benchmark::Counter(
+        static_cast<double>(total_chunks) / state.iterations());
+    state.counters["ConstraintsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_constraints) / state.iterations());
+    state.counters["OperationsPerIter"] = benchmark::Counter(
+        static_cast<double>(total_operations) / state.iterations());
 }
 BENCHMARK(BM_EllipticCurveStreamingConstraints<PallasGroupJacobian>);
 BENCHMARK(BM_EllipticCurveStreamingConstraints<Edwards25519GroupExtended>);
@@ -199,3 +270,65 @@ static void BM_ConstraintVsDirectComparison(benchmark::State& state) {
 }
 BENCHMARK(BM_ConstraintVsDirectComparison<PallasGroupJacobian>);
 BENCHMARK(BM_ConstraintVsDirectComparison<Edwards25519GroupExtended>);
+
+// Comprehensive comparison of all constraint approaches
+template<typename ECG>
+static void BM_ConstraintApproachComparison(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        state.PauseTiming();
+        
+        // Time Multilinear approach
+        auto start_multi = std::chrono::high_resolution_clock::now();
+        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
+        auto multi_constraints = mult.multiply_to_constraints(a, b);
+        auto end_multi = std::chrono::high_resolution_clock::now();
+        
+        // Time Neo approach
+        auto start_neo = std::chrono::high_resolution_clock::now();
+        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
+        auto neo_cs = neo_mult.generate_constraint_system(a, b);
+        auto end_neo = std::chrono::high_resolution_clock::now();
+        
+        // Time Streaming approach
+        auto start_stream = std::chrono::high_resolution_clock::now();
+        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> stream_mult;
+        auto stream_chunks = stream_mult.process_in_chunks(a, b);
+        auto end_stream = std::chrono::high_resolution_clock::now();
+        
+        state.ResumeTiming();
+        
+        // Calculate metrics
+        auto multi_time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_multi - start_multi).count();
+        auto neo_time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_neo - start_neo).count();
+        auto stream_time = std::chrono::duration_cast<std::chrono::nanoseconds>(end_stream - start_stream).count();
+        
+        std::size_t stream_total_constraints = 0;
+        for (const auto& chunk : stream_chunks) {
+            stream_total_constraints += chunk.constraints.size();
+        }
+        
+        std::size_t neo_total_constraints = neo_cs.bit_constraints.size() + 
+                                           neo_cs.field_constraints.size() + 
+                                           neo_cs.small_field_constraints.size();
+        
+        state.counters["MultilinearTimeNs"] = benchmark::Counter(multi_time);
+        state.counters["NeoTimeNs"] = benchmark::Counter(neo_time);
+        state.counters["StreamTimeNs"] = benchmark::Counter(stream_time);
+        state.counters["MultilinearConstraints"] = benchmark::Counter(multi_constraints.size());
+        state.counters["NeoConstraints"] = benchmark::Counter(neo_total_constraints);
+        state.counters["StreamConstraints"] = benchmark::Counter(stream_total_constraints);
+        state.counters["StreamChunks"] = benchmark::Counter(stream_chunks.size());
+        state.counters["NeoSpeedup"] = benchmark::Counter(static_cast<double>(multi_time) / neo_time);
+        state.counters["StreamSpeedup"] = benchmark::Counter(static_cast<double>(multi_time) / stream_time);
+        
+        benchmark::DoNotOptimize(multi_constraints);
+        benchmark::DoNotOptimize(neo_cs);
+        benchmark::DoNotOptimize(stream_chunks);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_ConstraintApproachComparison<PallasGroupJacobian>);
+BENCHMARK(BM_ConstraintApproachComparison<Edwards25519GroupExtended>);
