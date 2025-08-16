@@ -20,6 +20,8 @@
 #include "edwards25519.h"
 #include "fastrng.h"
 #include "pastacurves.h"
+#include "abeliangroup.h"
+#include "primefield.h"
 
 using namespace blacknet::crypto;
 
@@ -86,3 +88,113 @@ static void BM_EllipticCurveMul(benchmark::State& state) {
 }
 BENCHMARK(BM_EllipticCurveMul<PallasGroupJacobian>);
 BENCHMARK(BM_EllipticCurveMul<Edwards25519GroupExtended>);
+
+// ADDSUBCHAIN-E Constraint Generation Benchmarks
+
+template<typename ECG>
+static void BM_EllipticCurveConstraints(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        abeliangroup::ProofSystemOptimizedMult<ECG, typename ECG::Scalar, PrimeField> mult;
+        auto constraints = mult.generate_constraint_system(a, b);
+        
+        benchmark::DoNotOptimize(constraints.linear_constraints);
+        benchmark::DoNotOptimize(constraints.quadratic_constraints);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_EllipticCurveConstraints<PallasGroupJacobian>);
+BENCHMARK(BM_EllipticCurveConstraints<Edwards25519GroupExtended>);
+
+template<typename ECG>
+static void BM_EllipticCurveMultilinearConstraints(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
+        auto simple_constraints = mult.multiply_to_constraints(a, b);
+        
+        benchmark::DoNotOptimize(simple_constraints);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_EllipticCurveMultilinearConstraints<PallasGroupJacobian>);
+BENCHMARK(BM_EllipticCurveMultilinearConstraints<Edwards25519GroupExtended>);
+
+template<typename ECG>
+static void BM_EllipticCurveNeoConstraints(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, PrimeField> neo_mult;
+        auto bit_granular_cs = neo_mult.generate_constraint_system(a, b);
+        
+        benchmark::DoNotOptimize(bit_granular_cs.bit_constraints);
+        benchmark::DoNotOptimize(bit_granular_cs.field_constraints);
+        benchmark::DoNotOptimize(bit_granular_cs.small_field_constraints);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_EllipticCurveNeoConstraints<PallasGroupJacobian>);
+BENCHMARK(BM_EllipticCurveNeoConstraints<Edwards25519GroupExtended>);
+
+template<typename ECG>
+static void BM_EllipticCurveStreamingConstraints(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> streaming_mult;
+        auto chunk_constraints = streaming_mult.process_in_chunks(a, b);
+        
+        benchmark::DoNotOptimize(chunk_constraints);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_EllipticCurveStreamingConstraints<PallasGroupJacobian>);
+BENCHMARK(BM_EllipticCurveStreamingConstraints<Edwards25519GroupExtended>);
+
+// Benchmark constraint generation vs direct computation
+template<typename ECG>
+static void BM_ConstraintVsDirectComparison(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        state.PauseTiming();
+        
+        // Time constraint generation
+        auto start_constraints = std::chrono::high_resolution_clock::now();
+        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
+        auto constraints = mult.multiply_to_constraints(a, b);
+        auto end_constraints = std::chrono::high_resolution_clock::now();
+        
+        // Time direct computation
+        auto start_direct = std::chrono::high_resolution_clock::now();
+        auto result = a * b;
+        auto end_direct = std::chrono::high_resolution_clock::now();
+        
+        state.ResumeTiming();
+        
+        auto constraint_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            end_constraints - start_constraints).count();
+        auto direct_time = std::chrono::duration_cast<std::chrono::nanoseconds>(
+            end_direct - start_direct).count();
+        
+        state.counters["ConstraintTimeNs"] = benchmark::Counter(constraint_time);
+        state.counters["DirectTimeNs"] = benchmark::Counter(direct_time);
+        state.counters["ConstraintCount"] = benchmark::Counter(constraints.size());
+        state.counters["Overhead"] = benchmark::Counter(
+            static_cast<double>(constraint_time) / direct_time);
+        
+        benchmark::DoNotOptimize(constraints);
+        benchmark::DoNotOptimize(result);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_ConstraintVsDirectComparison<PallasGroupJacobian>);
+BENCHMARK(BM_ConstraintVsDirectComparison<Edwards25519GroupExtended>);

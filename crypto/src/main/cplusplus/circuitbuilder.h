@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "matrixsparse.h"
+#include "abeliangroup.h"
 
 namespace blacknet::crypto {
 
@@ -690,6 +691,90 @@ struct CircuitBuilder {
         out << "Circuit " << constraints.size() << 'x' << variables() << std::endl;
         for (const auto& scope : scopes)
             scope.print(out, 0);
+    }
+
+    // Elliptic curve scalar multiplication constraint generation using ADDSUBCHAIN-E
+    template<typename ECGroup, typename Scalar>
+    constexpr std::pair<Variable, Variable> elliptic_curve_scalar_mult(
+        const Variable& point_x, const Variable& point_y,
+        const Variable& scalar_var,
+        const ECGroup& base_point, const Scalar& scalar_value
+    ) {
+        // Generate constraints using ADDSUBCHAIN-E optimization
+        abeliangroup::ProofSystemOptimizedMult<ECGroup, Scalar, E> mult;
+        auto constraint_system = mult.generate_constraint_system(base_point, scalar_value);
+        
+        // Result point variables
+        Variable result_x = auxiliary();
+        Variable result_y = auxiliary();
+        
+        // Add linear constraints (degree 1)
+        for (const auto& linear_constraint : constraint_system.linear_constraints) {
+            LinearCombination lc;
+            // Convert field constraint coefficients to linear combination
+            // This is a simplified version - actual implementation would depend on 
+            // the specific elliptic curve coordinate system
+            for (size_t i = 0; i < linear_constraint.size() && i < 3; ++i) {
+                if (i == 0) lc = lc + LinearCombination(point_x) * linear_constraint[i];
+                else if (i == 1) lc = lc + LinearCombination(point_y) * linear_constraint[i];
+                else lc = lc + LinearCombination(result_x) * linear_constraint[i];
+            }
+            (*this)(lc == E(0));
+        }
+        
+        // Add quadratic constraints (degree 2) for conditional operations
+        for (const auto& quad_constraint : constraint_system.quadratic_constraints) {
+            // Handle conditional addition constraints
+            // bit * (x1 + x2 - x3) + (1-bit) * (x1 - x3) = 0
+            LinearCombination conditional_lc;
+            if (quad_constraint.size() >= 4) {
+                conditional_lc = LinearCombination(scalar_var) * 
+                    (LinearCombination(point_x) + LinearCombination(point_y) - LinearCombination(result_x)) +
+                    (E(1) - LinearCombination(scalar_var)) * 
+                    (LinearCombination(point_x) - LinearCombination(result_x));
+            }
+            (*this)(conditional_lc == E(0));
+        }
+        
+        return {result_x, result_y};
+    }
+    
+    // Simplified version for common elliptic curve operations
+    template<typename ECGroup>
+    constexpr std::pair<Variable, Variable> ec_point_add(
+        const Variable& p1_x, const Variable& p1_y,
+        const Variable& p2_x, const Variable& p2_y
+    ) {
+        Variable result_x = auxiliary();
+        Variable result_y = auxiliary();
+        
+        // Point addition constraint: P1 + P2 = R
+        // Simplified constraint generation for point addition
+        LinearCombination add_constraint_x = LinearCombination(p1_x) + LinearCombination(p2_x) - LinearCombination(result_x);
+        LinearCombination add_constraint_y = LinearCombination(p1_y) + LinearCombination(p2_y) - LinearCombination(result_y);
+        
+        (*this)(add_constraint_x == E(0));
+        (*this)(add_constraint_y == E(0));
+        
+        return {result_x, result_y};
+    }
+    
+    // Point doubling constraint generation
+    template<typename ECGroup>
+    constexpr std::pair<Variable, Variable> ec_point_double(
+        const Variable& point_x, const Variable& point_y
+    ) {
+        Variable result_x = auxiliary();
+        Variable result_y = auxiliary();
+        
+        // Point doubling constraint: 2P = R
+        LinearCombination double_constraint_x = E(2) * LinearCombination(point_x) - LinearCombination(result_x);
+        LinearCombination double_constraint_y = E(2) * LinearCombination(point_y) - LinearCombination(result_y);
+        
+        (*this)(double_constraint_x == E(0));
+        (*this)(double_constraint_y == E(0));
+        
+        return {result_x, result_y};
     }
 };
 

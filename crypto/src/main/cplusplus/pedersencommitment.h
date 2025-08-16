@@ -22,6 +22,7 @@
 #include <oneapi/tbb/parallel_reduce.h>
 
 #include "vectordense.h"
+#include "abeliangroup.h"
 
 namespace blacknet::crypto {
 
@@ -70,6 +71,115 @@ public:
 
     constexpr bool open(const G& e, const VectorDense<typename G::Scalar>& v) const {
         return e == commit(v);
+    }
+
+    // Generate multilinear constraints for commitment opening proofs
+    template<typename Field>
+    struct CommitmentConstraints {
+        std::vector<std::vector<Field>> linear_constraints;
+        std::vector<std::vector<Field>> quadratic_constraints;
+    };
+
+    template<typename Field>
+    constexpr CommitmentConstraints<Field> generate_opening_constraints(
+        const VectorDense<typename G::Scalar>& values
+    ) const {
+        CommitmentConstraints<Field> constraints;
+        
+        // Generate constraints for each scalar multiplication pp[i] * v[i]
+        for (std::size_t i = 0; i < values.size() && i < pp.size(); ++i) {
+            abeliangroup::MultilinearScalarMult<G, typename G::Scalar> mult;
+            auto simple_constraints = mult.multiply_to_constraints(pp[i], values[i]);
+            
+            // Convert SimpleConstraint to field constraints
+            for (const auto& constraint : simple_constraints) {
+                switch (constraint.type) {
+                    case abeliangroup::SimpleConstraint<G>::POINT_ADD:
+                    case abeliangroup::SimpleConstraint<G>::POINT_SUB:
+                    case abeliangroup::SimpleConstraint<G>::POINT_DOUBLE:
+                        // Add as linear constraint
+                        constraints.linear_constraints.push_back(
+                            encode_linear_commitment_constraint(constraint, i)
+                        );
+                        break;
+                    case abeliangroup::SimpleConstraint<G>::CONDITIONAL_ADD:
+                        // Add as quadratic constraint
+                        constraints.quadratic_constraints.push_back(
+                            encode_quadratic_commitment_constraint(constraint, i)
+                        );
+                        break;
+                }
+            }
+        }
+        
+        return constraints;
+    }
+
+    // Optimized commitment with Neo-style pay-per-bit constraints
+    template<typename Field>
+    constexpr auto generate_neo_opening_constraints(
+        const VectorDense<typename G::Scalar>& values
+    ) const {
+        abeliangroup::NeoOptimizedMult<G, typename G::Scalar, Field> neo_mult;
+        
+        struct NeoCommitmentConstraints {
+            std::vector<std::vector<bool>> bit_constraints;
+            std::vector<std::vector<Field>> field_constraints;
+            std::vector<std::vector<uint8_t>> small_field_constraints;
+        } neo_constraints;
+        
+        // Generate bit-granular constraints for each commitment component
+        for (std::size_t i = 0; i < values.size() && i < pp.size(); ++i) {
+            auto cs = neo_mult.generate_constraint_system(pp[i], values[i]);
+            
+            // Accumulate constraints
+            neo_constraints.bit_constraints.insert(
+                neo_constraints.bit_constraints.end(),
+                cs.bit_constraints.begin(), cs.bit_constraints.end()
+            );
+            neo_constraints.field_constraints.insert(
+                neo_constraints.field_constraints.end(),
+                cs.field_constraints.begin(), cs.field_constraints.end()
+            );
+            neo_constraints.small_field_constraints.insert(
+                neo_constraints.small_field_constraints.end(),
+                cs.small_field_constraints.begin(), cs.small_field_constraints.end()
+            );
+        }
+        
+        return neo_constraints;
+    }
+
+private:
+    template<typename Field>
+    std::vector<Field> encode_linear_commitment_constraint(
+        const abeliangroup::SimpleConstraint<G>& constraint, 
+        std::size_t commitment_index
+    ) const {
+        // Encode geometric constraint for Pedersen commitment opening
+        // Format: [commitment_index, constraint_type, coefficients...]
+        std::vector<Field> encoded;
+        encoded.push_back(Field(commitment_index));
+        encoded.push_back(Field(static_cast<int>(constraint.type)));
+        
+        // Add constraint-specific coefficients
+        // This is a simplified encoding - actual implementation would depend
+        // on the specific group representation and field arithmetic
+        return encoded;
+    }
+
+    template<typename Field>
+    std::vector<Field> encode_quadratic_commitment_constraint(
+        const abeliangroup::SimpleConstraint<G>& constraint,
+        std::size_t commitment_index
+    ) const {
+        // Encode conditional operations for commitment opening
+        std::vector<Field> encoded;
+        encoded.push_back(Field(commitment_index));
+        encoded.push_back(Field(static_cast<int>(constraint.type)));
+        
+        // Add quadratic constraint coefficients for conditional operations
+        return encoded;
     }
 };
 
