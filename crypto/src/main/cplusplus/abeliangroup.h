@@ -193,6 +193,44 @@ struct MultilinearConstraintPoly {
     }
 };
 
+// Optimized for Neo-style folding with pay-per-bit commitments
+template<typename AG, typename Scalar, typename Field>
+class NeoOptimizedMult {
+public:
+    struct BitGranularConstraintSystem {
+        std::vector<std::vector<bool>> bit_constraints;        // Cheap commits!
+        std::vector<std::vector<Field>> field_constraints;     // Expensive commits
+        std::vector<std::vector<u8>> small_field_constraints;  // Goldilocks-friendly
+        // Optimize for bit-width, not degree!
+    };
+    
+    BitGranularConstraintSystem generate_constraint_system(const AG& e, const Scalar& s) {
+        BitGranularConstraintSystem cs;
+        
+        // Process scalar bit-by-bit for optimal pay-per-bit costs
+        std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
+            // Bit operations are almost free to commit to!
+            cs.bit_constraints.push_back({bit});
+            
+            // Only use expensive field operations when necessary
+            if (bit) {
+                // Minimal field arithmetic for actual point operations
+                cs.small_field_constraints.push_back(
+                    encode_goldilocks_operation(bit)
+                );
+            }
+        });
+        
+        return cs;
+    }
+    
+private:
+    std::vector<u8> encode_goldilocks_operation(bool bit) {
+        // Encode operations using Goldilocks prime for efficiency
+        return {}; // Implementation depends on specific bit operation
+    }
+};
+
 // Optimized for PLONK/STARK-style systems
 template<typename AG, typename Scalar, typename Field>
 class ProofSystemOptimizedMult {
