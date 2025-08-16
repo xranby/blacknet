@@ -98,7 +98,7 @@ static void BM_EllipticCurveConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::ProofSystemOptimizedMult<ECG, typename ECG::Scalar, PrimeField> mult;
+        abeliangroup::ProofSystemOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> mult;
         auto constraints = mult.generate_constraint_system(a, b);
         
         benchmark::DoNotOptimize(constraints.linear_constraints);
@@ -131,7 +131,7 @@ static void BM_EllipticCurveNeoConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, PrimeField> neo_mult;
+        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
         auto bit_granular_cs = neo_mult.generate_constraint_system(a, b);
         
         benchmark::DoNotOptimize(bit_granular_cs.bit_constraints);
