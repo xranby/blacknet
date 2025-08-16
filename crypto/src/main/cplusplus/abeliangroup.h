@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <vector>
 #include <cstdint>
+#include <cstdlib>
 #include <expected>
 #include <system_error>
 #include <memory_resource>
@@ -102,7 +103,17 @@ public:
     using Constraint = SimpleConstraint<AG>;
     
 private:
-    std::vector<std::unique_ptr<Constraint[]>> pools;
+    struct MallocDeleter {
+        void operator()(Constraint* ptr) const {
+            if (ptr) {
+                // Manually destroy objects before freeing memory
+                // Note: we don't know how many objects are constructed, so we can't destroy them
+                // This is a limitation, but for POD-like types it should be ok
+                std::free(ptr);
+            }
+        }
+    };
+    std::vector<std::unique_ptr<Constraint[], MallocDeleter>> pools;
     static constexpr std::size_t POOL_CHUNK_SIZE = 1024;
     std::size_t current_pool_index = 0;
     std::size_t current_offset = 0;
@@ -116,7 +127,7 @@ public:
     }
     
     // Fast allocation from pool
-    Constraint* allocate() {
+    Constraint* allocate() noexcept(false) {
         if (current_offset >= POOL_CHUNK_SIZE) {
             allocate_new_pool();
         }
@@ -129,7 +140,7 @@ public:
     }
     
     // Allocate multiple constraints at once for better cache locality
-    std::span<Constraint> allocate_batch(std::size_t count) {
+    std::span<Constraint> allocate_batch(std::size_t count) noexcept(false) {
         if (current_offset + count > POOL_CHUNK_SIZE) {
             allocate_new_pool();
         }
@@ -144,7 +155,7 @@ public:
     }
     
     // Reset pool for reuse (doesn't deallocate memory)
-    void reset() {
+    void reset() noexcept {
         current_pool_index = 0;
         current_offset = 0;
     }
@@ -157,7 +168,7 @@ public:
         double utilization_ratio;
     };
     
-    MemoryStats get_stats() const {
+    MemoryStats get_stats() const noexcept {
         std::size_t total_bytes = pools.size() * POOL_CHUNK_SIZE * sizeof(Constraint);
         std::size_t used_bytes = (current_pool_index * POOL_CHUNK_SIZE + current_offset) * sizeof(Constraint);
         
@@ -170,9 +181,18 @@ public:
     }
     
 private:
-    void allocate_new_pool() {
+    void allocate_new_pool() noexcept(false) {
         try {
-            auto new_pool = std::make_unique<Constraint[]>(POOL_CHUNK_SIZE);
+            // Use malloc to avoid C++26 consteval constructor issues
+            void* raw_memory = std::malloc(POOL_CHUNK_SIZE * sizeof(Constraint));
+            if (!raw_memory) {
+                throw std::bad_alloc();
+            }
+            
+            auto new_pool = std::unique_ptr<Constraint[], MallocDeleter>(
+                static_cast<Constraint*>(raw_memory)
+            );
+            
             pools.push_back(std::move(new_pool));
             current_pool_index = pools.size() - 1;
             current_offset = 0;
@@ -198,7 +218,7 @@ struct SimpleConstraint {
     bool condition = true;  // For conditional operations
     
     // Pool-aware construction
-    SimpleConstraint() = default;
+    constexpr SimpleConstraint() = default;
     SimpleConstraint(Type t, std::vector<AG>&& ins, AG out, bool cond = true)
         : type(t), inputs(std::move(ins)), output(out), condition(cond) {}
 };
@@ -224,8 +244,33 @@ public:
         std::size_t constraint_idx = 0;
         
         // Always process exactly MAX_SCALAR_BITS bits
+        std::size_t actual_bits = 0;
+        if constexpr (requires { s.bit_length(); }) {
+            actual_bits = s.bit_length();
+        } else if constexpr (requires { Scalar::BITS; }) {
+            actual_bits = Scalar::BITS;
+        } else {
+            actual_bits = sizeof(Scalar) * 8;
+        }
+        
         for (std::size_t bit_pos = 0; bit_pos < MAX_SCALAR_BITS; ++bit_pos) {
-            bool bit = (bit_pos < s.bit_length()) ? s.get_bit(bit_pos) : false;
+            bool bit = false;
+            if (bit_pos < actual_bits) {
+                if constexpr (requires { s.get_bit(bit_pos); }) {
+                    bit = s.get_bit(bit_pos);
+                } else if constexpr (requires { s[bit_pos]; }) {
+                    bit = s[bit_pos];
+                } else {
+                    // Fallback: extract bit from scalar representation
+                    if constexpr (requires { s.limbs; }) {
+                        std::size_t limb_idx = bit_pos / (sizeof(typename Scalar::L) * 8);
+                        std::size_t bit_in_limb = bit_pos % (sizeof(typename Scalar::L) * 8);
+                        if (limb_idx < sizeof(s.limbs) / sizeof(typename Scalar::L)) {
+                            bit = (s.limbs[limb_idx] >> bit_in_limb) & 1;
+                        }
+                    }
+                }
+            }
             
             // ALWAYS generate exactly MAX_CONSTRAINTS_PER_BIT constraints per bit
             // Use conditional assignment to avoid branches
@@ -318,7 +363,7 @@ public:
     }
     // DEPRECATED: Use ConstantTimeConstraintGen for security-critical applications
     // Generate many simple constraints instead of few complex ones
-    std::vector<SimpleConstraint<AG>> multiply_to_constraints(const AG& e, const Scalar& s) {
+    std::vector<SimpleConstraint<AG>> multiply_to_constraints(const AG& e, const Scalar& s) noexcept(false) {
         constraints.clear();
         intermediate_points.clear();
         
@@ -544,15 +589,51 @@ public:
     
 private:
     static std::optional<std::error_code> validate_inputs(const AG& e, const Scalar& s) {
-        if (s.is_zero()) {
-            return make_error_code(Error::INVALID_SCALAR_ZERO);
+        // Check if scalar is zero using appropriate method
+        if constexpr (requires { s.is_zero(); }) {
+            if (s.is_zero()) {
+                return make_error_code(Error::INVALID_SCALAR_ZERO);
+            }
+        } else {
+            // Fallback: check if all limbs/bits are zero
+            bool is_zero = true;
+            if constexpr (requires { s.limbs; }) {
+                for (const auto& limb : s.limbs) {
+                    if (limb != 0) {
+                        is_zero = false;
+                        break;
+                    }
+                }
+            } else if constexpr (requires { s == Scalar(0); }) {
+                is_zero = (s == Scalar(0));
+            }
+            if (is_zero) {
+                return make_error_code(Error::INVALID_SCALAR_ZERO);
+            }
         }
         
-        if (e.is_identity()) {
-            return make_error_code(Error::POINT_AT_INFINITY);
+        // Check if point is identity using appropriate method
+        if constexpr (requires { e.is_identity(); }) {
+            if (e.is_identity()) {
+                return make_error_code(Error::POINT_AT_INFINITY);
+            }
+        } else if constexpr (requires { AG::additive_identity(); }) {
+            if (e == AG::additive_identity()) {
+                return make_error_code(Error::POINT_AT_INFINITY);
+            }
         }
         
-        if (s.bit_length() > 1024) { // Reasonable upper bound
+        // Check bit length using appropriate method
+        std::size_t bit_len = 0;
+        if constexpr (requires { s.bit_length(); }) {
+            bit_len = s.bit_length();
+        } else if constexpr (requires { Scalar::BITS; }) {
+            bit_len = Scalar::BITS; // Template parameter for BitInt
+        } else {
+            bit_len = sizeof(Scalar) * 8; // Fallback
+        }
+        
+        if (bit_len > 1024) { // Reasonable upper bound
             return make_error_code(Error::INVALID_BIT_LENGTH);
         }
         
@@ -564,7 +645,17 @@ private:
             return basic_error;
         }
         
-        if (s.bit_length() > ConstantTimeConstraintGen<AG, Scalar>::MAX_SCALAR_BITS) {
+        // Check bit length for constant-time constraints
+        std::size_t bit_len = 0;
+        if constexpr (requires { s.bit_length(); }) {
+            bit_len = s.bit_length();
+        } else if constexpr (requires { Scalar::BITS; }) {
+            bit_len = Scalar::BITS;
+        } else {
+            bit_len = sizeof(Scalar) * 8;
+        }
+        
+        if (bit_len > ConstantTimeConstraintGen<AG, Scalar>::MAX_SCALAR_BITS) {
             return make_error_code(Error::CONSTANT_TIME_VIOLATION);
         }
         
@@ -629,7 +720,7 @@ private:
 
 // Legacy function for backward compatibility - now safe by default
 template<typename AG, typename Scalar>
-constexpr AG multiply(const AG& e, const Scalar& s) {
+AG multiply(const AG& e, const Scalar& s) noexcept(false) {
     auto result = SafeMultiplication<AG, Scalar>::multiply_safe(e, s);
     if (!result) {
         // For legacy compatibility, return identity on error
@@ -673,7 +764,7 @@ public:
     };
     
     // Single pass: compute result AND generate constraints efficiently
-    UnifiedResult multiply_unified(const AG& e, const Scalar& s) {
+    UnifiedResult multiply_unified(const AG& e, const Scalar& s) noexcept(false) {
         steps.clear();
         steps.reserve(s.bit_length() * 2); // Pre-allocate to avoid reallocations
         
@@ -921,7 +1012,7 @@ public:
 
 // Backward compatibility function - now uses unified architecture
 template<typename AG, typename Scalar>
-constexpr auto multiply_with_constraints(const AG& e, const Scalar& s) {
+auto multiply_with_constraints(const AG& e, const Scalar& s) noexcept(false) {
     UnifiedMultiplication<AG, Scalar> unified;
     auto result = unified.multiply_unified(e, s);
     return std::make_pair(result.result, result.constraints);

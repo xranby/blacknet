@@ -701,16 +701,16 @@ struct CircuitBuilder {
         const ECGroup& base_point, const Scalar& scalar_value
     ) {
         // Generate constraints using ADDSUBCHAIN-E optimization
-        abeliangroup::ProofSystemOptimizedMult<ECGroup, Scalar, E> mult;
-        auto constraint_system = mult.generate_constraint_system(base_point, scalar_value);
+        abeliangroup::ProofSystemOptimizedMult<ECGroup, Scalar, E> proof_mult;
+        auto constraint_system = proof_mult.generate_constraint_system(base_point, scalar_value);
         
         // Result point variables
         Variable result_x = auxiliary();
         Variable result_y = auxiliary();
         
         // Generate and add ADDSUBCHAIN-E constraints to circuit
-        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> mult;
-        auto simple_constraints = mult.multiply_to_constraints(base_point, scalar_value);
+        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> simple_mult;
+        auto simple_constraints = simple_mult.multiply_to_constraints(base_point, scalar_value);
         
         // Track intermediate variables for constraint chaining
         std::vector<Variable> intermediate_x_vars;

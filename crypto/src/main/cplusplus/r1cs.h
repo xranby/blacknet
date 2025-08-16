@@ -118,8 +118,8 @@ public:
         std::size_t additional_variables = 0
     ) {
         // Use ADDSUBCHAIN-E to generate optimized constraint system
-        abeliangroup::ProofSystemOptimizedMult<ECGroup, Scalar, E> mult;
-        auto constraint_system = mult.generate_constraint_system(base_point, scalar_value);
+        abeliangroup::ProofSystemOptimizedMult<ECGroup, Scalar, E> proof_mult;
+        auto constraint_system = proof_mult.generate_constraint_system(base_point, scalar_value);
         
         // Calculate required variables: base point (2) + scalar (1) + result (2) + intermediates
         std::size_t num_variables = 6 + additional_variables;
@@ -134,8 +134,8 @@ public:
         std::size_t constraint_idx = 0;
         
         // Convert ADDSUBCHAIN-E constraints to R1CS format
-        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> mult;
-        auto simple_constraints = mult.multiply_to_constraints(base_point, scalar_value);
+        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> simple_mult;
+        auto simple_constraints = simple_mult.multiply_to_constraints(base_point, scalar_value);
         
         // Process each ADDSUBCHAIN-E constraint
         for (const auto& constraint : simple_constraints) {
