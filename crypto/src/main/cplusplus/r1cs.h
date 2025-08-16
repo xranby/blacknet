@@ -133,52 +133,133 @@ public:
         
         std::size_t constraint_idx = 0;
         
-        // Convert linear constraints to R1CS format
-        // For linear constraint: x1 + x2 - x3 = 0
-        // Convert to: (x1 + x2 - x3) * 1 = 0
-        for (const auto& linear_constraint : constraint_system.linear_constraints) {
-            for (std::size_t var_idx = 0; var_idx < linear_constraint.size() && var_idx < num_variables; ++var_idx) {
-                if (linear_constraint[var_idx] != E(0)) {
-                    a_matrix.cIndex.push_back(var_idx);
-                    a_matrix.elements.push_back(linear_constraint[var_idx]);
-                }
-            }
-            a_matrix.rIndex.push_back(a_matrix.elements.size());
-            
-            // B matrix: constant 1
-            b_matrix.cIndex.push_back(0);  // constant variable
-            b_matrix.elements.push_back(E(1));
-            b_matrix.rIndex.push_back(b_matrix.elements.size());
-            
-            // C matrix: 0 (since we want the result to be 0)
-            c_matrix.rIndex.push_back(c_matrix.elements.size());
-            
-            constraint_idx++;
-        }
+        // Convert ADDSUBCHAIN-E constraints to R1CS format
+        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> mult;
+        auto simple_constraints = mult.multiply_to_constraints(base_point, scalar_value);
         
-        // Convert quadratic constraints to R1CS format
-        // For quadratic constraint: bit * (x1 + x2 - x3) + (1-bit) * (x1 - x3) = 0
-        // This is already in the form: A * B = C where A and B contain the factors
-        for (const auto& quad_constraint : constraint_system.quadratic_constraints) {
-            if (quad_constraint.size() >= 4) {
-                // A matrix: bit coefficient
-                a_matrix.cIndex.push_back(2);  // scalar bit variable
-                a_matrix.elements.push_back(E(1));
-                a_matrix.rIndex.push_back(a_matrix.elements.size());
-                
-                // B matrix: (x1 + x2 - x3) term
-                for (std::size_t i = 0; i < 3 && i < quad_constraint.size(); ++i) {
-                    if (quad_constraint[i] != E(0)) {
-                        b_matrix.cIndex.push_back(3 + i);  // point variables
-                        b_matrix.elements.push_back(quad_constraint[i]);
+        // Process each ADDSUBCHAIN-E constraint
+        for (const auto& constraint : simple_constraints) {
+            switch (constraint.type) {
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_ADD: {
+                    // Point addition: P + Q = R
+                    // R1CS form: (P.x + Q.x - R.x) * 1 = 0 (for x-coordinate)
+                    
+                    // A matrix: P.x + Q.x - R.x
+                    if (constraint.inputs.size() >= 2) {
+                        // Input point P coordinates (variables 1, 2)
+                        a_matrix.cIndex.push_back(1); 
+                        a_matrix.elements.push_back(E(1));
+                        
+                        // Input point Q coordinates (variables 3, 4)  
+                        a_matrix.cIndex.push_back(3);
+                        a_matrix.elements.push_back(E(1));
+                        
+                        // Output point R coordinates (variables 5, 6) - negative
+                        a_matrix.cIndex.push_back(5);
+                        a_matrix.elements.push_back(E(-1));
                     }
+                    a_matrix.rIndex.push_back(a_matrix.elements.size());
+                    
+                    // B matrix: constant 1
+                    b_matrix.cIndex.push_back(0);
+                    b_matrix.elements.push_back(E(1));
+                    b_matrix.rIndex.push_back(b_matrix.elements.size());
+                    
+                    // C matrix: 0 (constraint should equal 0)
+                    c_matrix.rIndex.push_back(c_matrix.elements.size());
+                    
+                    constraint_idx++;
+                    break;
                 }
-                b_matrix.rIndex.push_back(b_matrix.elements.size());
                 
-                // C matrix: result should be 0
-                c_matrix.rIndex.push_back(c_matrix.elements.size());
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_DOUBLE: {
+                    // Point doubling: 2P = R
+                    // R1CS form: (2*P.x - R.x) * 1 = 0
+                    
+                    // A matrix: 2*P.x - R.x
+                    if (!constraint.inputs.empty()) {
+                        // Input point P coordinates (variables 1, 2) - doubled
+                        a_matrix.cIndex.push_back(1);
+                        a_matrix.elements.push_back(E(2));
+                        
+                        // Output point R coordinates (variables 5, 6) - negative
+                        a_matrix.cIndex.push_back(5);
+                        a_matrix.elements.push_back(E(-1));
+                    }
+                    a_matrix.rIndex.push_back(a_matrix.elements.size());
+                    
+                    // B matrix: constant 1
+                    b_matrix.cIndex.push_back(0);
+                    b_matrix.elements.push_back(E(1));
+                    b_matrix.rIndex.push_back(b_matrix.elements.size());
+                    
+                    // C matrix: 0
+                    c_matrix.rIndex.push_back(c_matrix.elements.size());
+                    
+                    constraint_idx++;
+                    break;
+                }
+                
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_SUB: {
+                    // Point subtraction: P - Q = R
+                    // R1CS form: (P.x - Q.x - R.x) * 1 = 0
+                    
+                    // A matrix: P.x - Q.x - R.x
+                    if (constraint.inputs.size() >= 2) {
+                        // Input point P coordinates (variables 1, 2)
+                        a_matrix.cIndex.push_back(1);
+                        a_matrix.elements.push_back(E(1));
+                        
+                        // Input point Q coordinates (variables 3, 4) - negative
+                        a_matrix.cIndex.push_back(3);
+                        a_matrix.elements.push_back(E(-1));
+                        
+                        // Output point R coordinates (variables 5, 6) - negative
+                        a_matrix.cIndex.push_back(5);
+                        a_matrix.elements.push_back(E(-1));
+                    }
+                    a_matrix.rIndex.push_back(a_matrix.elements.size());
+                    
+                    // B matrix: constant 1
+                    b_matrix.cIndex.push_back(0);
+                    b_matrix.elements.push_back(E(1));
+                    b_matrix.rIndex.push_back(b_matrix.elements.size());
+                    
+                    // C matrix: 0
+                    c_matrix.rIndex.push_back(c_matrix.elements.size());
+                    
+                    constraint_idx++;
+                    break;
+                }
+                
+                case abeliangroup::SimpleConstraint<ECGroup>::CONDITIONAL_ADD: {
+                    // Conditional addition: if(bit) then P + Q else P
+                    // R1CS form: bit * (P + Q - R) + (1-bit) * (P - R) = 0
+                    // Rearranged: bit * (Q) = R - P
+                    
+                    // A matrix: bit (scalar variable 0)
+                    a_matrix.cIndex.push_back(0);
+                    a_matrix.elements.push_back(E(1));
+                    a_matrix.rIndex.push_back(a_matrix.elements.size());
+                    
+                    // B matrix: Q.x (second input point)
+                    if (constraint.inputs.size() >= 2) {
+                        b_matrix.cIndex.push_back(3);
+                        b_matrix.elements.push_back(E(1));
+                    }
+                    b_matrix.rIndex.push_back(b_matrix.elements.size());
+                    
+                    // C matrix: R.x - P.x
+                    c_matrix.cIndex.push_back(5); // R.x
+                    c_matrix.elements.push_back(E(1));
+                    c_matrix.cIndex.push_back(1); // P.x (negative)
+                    c_matrix.elements.push_back(E(-1));
+                    c_matrix.rIndex.push_back(c_matrix.elements.size());
+                    
+                    constraint_idx++;
+                    break;
+                }
             }
-            constraint_idx++;
         }
         
         return R1CS<E>(std::move(a_matrix), std::move(b_matrix), std::move(c_matrix));

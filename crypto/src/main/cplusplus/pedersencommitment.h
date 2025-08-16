@@ -157,15 +157,42 @@ private:
         const abeliangroup::SimpleConstraint<G>& constraint, 
         std::size_t commitment_index
     ) const {
-        // Encode geometric constraint for Pedersen commitment opening
-        // Format: [commitment_index, constraint_type, coefficients...]
         std::vector<Field> encoded;
-        encoded.push_back(Field(commitment_index));
-        encoded.push_back(Field(static_cast<int>(constraint.type)));
         
-        // Add constraint-specific coefficients
-        // This is a simplified encoding - actual implementation would depend
-        // on the specific group representation and field arithmetic
+        switch (constraint.type) {
+            case abeliangroup::SimpleConstraint<G>::POINT_ADD: {
+                // Encode point addition for commitment: pp[i] * v[i] + pp[j] * v[j] = result
+                encoded.push_back(Field(commitment_index));
+                encoded.push_back(Field(1)); // coefficient for first input
+                encoded.push_back(Field(1)); // coefficient for second input  
+                encoded.push_back(Field(-1)); // coefficient for output (negative)
+                break;
+            }
+            
+            case abeliangroup::SimpleConstraint<G>::POINT_DOUBLE: {
+                // Encode point doubling: 2 * (pp[i] * v[i]) = result
+                encoded.push_back(Field(commitment_index));
+                encoded.push_back(Field(2)); // doubling coefficient
+                encoded.push_back(Field(-1)); // output coefficient (negative)
+                break;
+            }
+            
+            case abeliangroup::SimpleConstraint<G>::POINT_SUB: {
+                // Encode point subtraction: pp[i] * v[i] - pp[j] * v[j] = result
+                encoded.push_back(Field(commitment_index));
+                encoded.push_back(Field(1)); // coefficient for first input
+                encoded.push_back(Field(-1)); // coefficient for second input (negative)
+                encoded.push_back(Field(-1)); // coefficient for output (negative)
+                break;
+            }
+            
+            default:
+                // Fallback encoding
+                encoded.push_back(Field(commitment_index));
+                encoded.push_back(Field(0));
+                break;
+        }
+        
         return encoded;
     }
 
@@ -174,13 +201,59 @@ private:
         const abeliangroup::SimpleConstraint<G>& constraint,
         std::size_t commitment_index
     ) const {
-        // Encode conditional operations for commitment opening
         std::vector<Field> encoded;
-        encoded.push_back(Field(commitment_index));
-        encoded.push_back(Field(static_cast<int>(constraint.type)));
         
-        // Add quadratic constraint coefficients for conditional operations
+        if (constraint.type == abeliangroup::SimpleConstraint<G>::CONDITIONAL_ADD) {
+            // Conditional commitment operation: bit * commitment_value = result
+            // For Neo-style pay-per-bit optimization
+            encoded.push_back(Field(commitment_index));
+            encoded.push_back(Field(1)); // bit coefficient
+            encoded.push_back(Field(1)); // commitment value coefficient
+            encoded.push_back(Field(-1)); // result coefficient (negative)
+            
+            // Add bit constraint cost optimization for Neo protocol
+            if (constraint.condition) {
+                encoded.push_back(Field(1)); // Low cost for bit operations
+            } else {
+                encoded.push_back(Field(0)); // No cost when bit is false
+            }
+        } else {
+            // Fallback for non-conditional constraints
+            encoded.push_back(Field(commitment_index));
+            encoded.push_back(Field(0));
+        }
+        
         return encoded;
+    }
+    
+    // Optimized batch constraint generation for multiple commitments
+    template<typename Field>
+    constexpr auto generate_batch_opening_constraints(
+        const std::vector<VectorDense<typename G::Scalar>>& value_batches
+    ) const {
+        CommitmentConstraints<Field> batch_constraints;
+        
+        for (std::size_t batch_idx = 0; batch_idx < value_batches.size(); ++batch_idx) {
+            const auto& values = value_batches[batch_idx];
+            
+            // Generate constraints for this batch
+            auto batch_constraint_set = generate_opening_constraints<Field>(values);
+            
+            // Merge into combined constraint system
+            batch_constraints.linear_constraints.insert(
+                batch_constraints.linear_constraints.end(),
+                batch_constraint_set.linear_constraints.begin(),
+                batch_constraint_set.linear_constraints.end()
+            );
+            
+            batch_constraints.quadratic_constraints.insert(
+                batch_constraints.quadratic_constraints.end(),
+                batch_constraint_set.quadratic_constraints.begin(),
+                batch_constraint_set.quadratic_constraints.end()
+            );
+        }
+        
+        return batch_constraints;
     }
 };
 

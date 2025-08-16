@@ -708,32 +708,96 @@ struct CircuitBuilder {
         Variable result_x = auxiliary();
         Variable result_y = auxiliary();
         
-        // Add linear constraints (degree 1)
-        for (const auto& linear_constraint : constraint_system.linear_constraints) {
-            LinearCombination lc;
-            // Convert field constraint coefficients to linear combination
-            // This is a simplified version - actual implementation would depend on 
-            // the specific elliptic curve coordinate system
-            for (size_t i = 0; i < linear_constraint.size() && i < 3; ++i) {
-                if (i == 0) lc = lc + LinearCombination(point_x) * linear_constraint[i];
-                else if (i == 1) lc = lc + LinearCombination(point_y) * linear_constraint[i];
-                else lc = lc + LinearCombination(result_x) * linear_constraint[i];
+        // Generate and add ADDSUBCHAIN-E constraints to circuit
+        abeliangroup::MultilinearScalarMult<ECGroup, Scalar> mult;
+        auto simple_constraints = mult.multiply_to_constraints(base_point, scalar_value);
+        
+        // Track intermediate variables for constraint chaining
+        std::vector<Variable> intermediate_x_vars;
+        std::vector<Variable> intermediate_y_vars;
+        
+        // Process each ADDSUBCHAIN-E constraint
+        for (const auto& constraint : simple_constraints) {
+            switch (constraint.type) {
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_ADD: {
+                    // Point addition constraint: P + Q = R
+                    if (constraint.inputs.size() >= 2) {
+                        Variable intermediate_x = auxiliary();
+                        Variable intermediate_y = auxiliary();
+                        
+                        // X-coordinate constraint: P.x + Q.x - R.x = 0 (simplified)
+                        LinearCombination x_constraint = 
+                            LinearCombination(point_x) + 
+                            LinearCombination(point_y) - 
+                            LinearCombination(intermediate_x);
+                        (*this)(x_constraint == E(0));
+                        
+                        intermediate_x_vars.push_back(intermediate_x);
+                        intermediate_y_vars.push_back(intermediate_y);
+                    }
+                    break;
+                }
+                
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_DOUBLE: {
+                    // Point doubling constraint: 2P = R
+                    if (!constraint.inputs.empty()) {
+                        Variable doubled_x = auxiliary();
+                        Variable doubled_y = auxiliary();
+                        
+                        // X-coordinate constraint: 2*P.x - R.x = 0
+                        LinearCombination double_constraint = 
+                            E(2) * LinearCombination(point_x) - 
+                            LinearCombination(doubled_x);
+                        (*this)(double_constraint == E(0));
+                        
+                        intermediate_x_vars.push_back(doubled_x);
+                        intermediate_y_vars.push_back(doubled_y);
+                    }
+                    break;
+                }
+                
+                case abeliangroup::SimpleConstraint<ECGroup>::POINT_SUB: {
+                    // Point subtraction constraint: P - Q = R
+                    if (constraint.inputs.size() >= 2) {
+                        Variable sub_result_x = auxiliary();
+                        Variable sub_result_y = auxiliary();
+                        
+                        // X-coordinate constraint: P.x - Q.x - R.x = 0 (simplified)
+                        LinearCombination sub_constraint = 
+                            LinearCombination(point_x) - 
+                            LinearCombination(point_y) - 
+                            LinearCombination(sub_result_x);
+                        (*this)(sub_constraint == E(0));
+                        
+                        intermediate_x_vars.push_back(sub_result_x);
+                        intermediate_y_vars.push_back(sub_result_y);
+                    }
+                    break;
+                }
+                
+                case abeliangroup::SimpleConstraint<ECGroup>::CONDITIONAL_ADD: {
+                    // Conditional addition constraint: if(bit) then P + Q else P
+                    // Quadratic constraint: bit * Q + (1-bit) * 0 = additional_term
+                    Variable conditional_x = auxiliary();
+                    Variable conditional_y = auxiliary();
+                    
+                    // Create conditional constraint using quadratic form
+                    // This represents: scalar_bit * point_operation = conditional_result
+                    Combination conditional_constraint = 
+                        LinearCombination(scalar_var) * LinearCombination(point_y);
+                    (*this)(conditional_constraint == LinearCombination(conditional_x));
+                    
+                    intermediate_x_vars.push_back(conditional_x);
+                    intermediate_y_vars.push_back(conditional_y);
+                    break;
+                }
             }
-            (*this)(lc == E(0));
         }
         
-        // Add quadratic constraints (degree 2) for conditional operations
-        for (const auto& quad_constraint : constraint_system.quadratic_constraints) {
-            // Handle conditional addition constraints
-            // bit * (x1 + x2 - x3) + (1-bit) * (x1 - x3) = 0
-            LinearCombination conditional_lc;
-            if (quad_constraint.size() >= 4) {
-                conditional_lc = LinearCombination(scalar_var) * 
-                    (LinearCombination(point_x) + LinearCombination(point_y) - LinearCombination(result_x)) +
-                    (E(1) - LinearCombination(scalar_var)) * 
-                    (LinearCombination(point_x) - LinearCombination(result_x));
-            }
-            (*this)(conditional_lc == E(0));
+        // Set final result to last intermediate values or original points if no constraints
+        if (!intermediate_x_vars.empty()) {
+            result_x = intermediate_x_vars.back();
+            result_y = intermediate_y_vars.back();
         }
         
         return {result_x, result_y};
