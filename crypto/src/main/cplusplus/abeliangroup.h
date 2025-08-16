@@ -148,18 +148,70 @@ public:
     }
 };
 
-// Primary scalar multiplication function using ADDSUBCHAIN-E
+// Primary scalar multiplication function using ADDSUBCHAIN-E algorithm
 template<typename AG, typename Scalar>
 constexpr AG multiply(const AG& e, const Scalar& s) {
+    AG P = AG::additive_identity();
+    AG Q = e;
+
+    int QisQdouble = 0;
+    int state = 0;
+
+    auto updateQ = [&Q, &QisQdouble]() {
+        for (int i = 0; i < QisQdouble; ++i) {
+            Q = Q.douple();
+        }
+        QisQdouble = 0;
+    };
+
+    std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
+        switch(state){
+            case 0:
+                if(bit) {
+                    state = 1;
+                } else {
+                    QisQdouble += 1;
+                }
+                break;
+            case 1:
+                // Q only needs to be updated in case P gets updated
+                updateQ();
+                if(bit) {
+                    P = P - Q;
+                    QisQdouble += 2;
+                    state = 11;
+                } else {
+                    P = P + Q;
+                    QisQdouble += 2;
+                    state = 0;
+                }
+                break;
+            case 11:
+                if(bit) {
+                    QisQdouble += 1;
+                } else {
+                    state = 1;
+                }
+                break;
+        }
+    });
+
+    if(state != 0){
+        // Q only needs to be updated in case P gets updated
+        updateQ();
+        P = P + Q;
+    }
+
+    return P;
+}
+
+// Generate constraints without affecting the main multiply function
+template<typename AG, typename Scalar>
+constexpr auto multiply_with_constraints(const AG& e, const Scalar& s) {
     MultilinearScalarMult<AG, Scalar> mult;
     auto constraints = mult.multiply_to_constraints(e, s);
-    
-    // Execute the final constraint to get the result
-    if (!constraints.empty()) {
-        return constraints.back().output;
-    }
-    
-    return AG::additive_identity();
+    auto result = multiply(e, s);
+    return std::make_pair(result, constraints);
 }
 
 // Multilinear polynomial representation for proof systems
