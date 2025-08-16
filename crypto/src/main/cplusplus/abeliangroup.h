@@ -1064,27 +1064,143 @@ public:
     BitGranularConstraintSystem generate_constraint_system(const AG& e, const Scalar& s) {
         BitGranularConstraintSystem cs;
         
+        AG P = AG::additive_identity();
+        AG Q = e;
+        
+        int QisQdouble = 0;
+        int state = 0;
+        std::size_t bit_count = 0;
+        
         // Process scalar bit-by-bit for optimal pay-per-bit costs
         std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
             // Bit operations are almost free to commit to!
             cs.bit_constraints.push_back({bit});
             
-            // Only use expensive field operations when necessary
-            if (bit) {
-                // Minimal field arithmetic for actual point operations
-                cs.small_field_constraints.push_back(
-                    encode_goldilocks_operation(bit)
-                );
+            // Neo-style optimization: represent intermediate values in different granularities
+            switch(state) {
+                case 0:
+                    if (bit) {
+                        // Use small field for control flow
+                        cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
+                        
+                        // Actual point operations require full field arithmetic
+                        auto field_ops = perform_point_operations(P, Q, true, QisQdouble);
+                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        
+                        P = P - Q;
+                        QisQdouble = 2;
+                        state = 11;
+                    } else {
+                        cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
+                        
+                        auto field_ops = perform_point_operations(P, Q, false, QisQdouble);
+                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        
+                        P = P + Q;
+                        QisQdouble = 2;
+                        state = 0;
+                    }
+                    break;
+                    
+                case 11:
+                    if (bit) {
+                        QisQdouble += 1;
+                        cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
+                    } else {
+                        // Perform accumulated doublings
+                        for (int i = 0; i < QisQdouble; ++i) {
+                            Q = Q.douple();
+                            auto field_ops = perform_doubling_operations(Q);
+                            cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        }
+                        
+                        cs.small_field_constraints.push_back(encode_goldilocks_operation(bit, bit_count));
+                        auto field_ops = perform_point_operations(P, Q, false, 0);
+                        cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+                        
+                        P = P + Q;
+                        QisQdouble = 2;
+                        state = 0;
+                    }
+                    break;
             }
+            bit_count++;
         });
+        
+        // Final operations
+        if (QisQdouble > 0) {
+            for (int i = 0; i < QisQdouble; ++i) {
+                Q = Q.douple();
+                auto field_ops = perform_doubling_operations(Q);
+                cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+            }
+            
+            auto field_ops = perform_point_operations(P, Q, false, 0);
+            cs.field_constraints.insert(cs.field_constraints.end(), field_ops.begin(), field_ops.end());
+            P = P + Q;
+        }
         
         return cs;
     }
     
 private:
-    std::vector<uint8_t> encode_goldilocks_operation(bool bit) {
+    std::vector<uint8_t> encode_goldilocks_operation(bool bit, std::size_t bit_position) {
         // Encode operations using Goldilocks prime for efficiency
-        return {}; // Implementation depends on specific bit operation
+        // Goldilocks prime: 2^64 - 2^32 + 1
+        std::vector<uint8_t> encoded;
+        encoded.push_back(bit ? 1 : 0);
+        encoded.push_back(static_cast<uint8_t>(bit_position & 0xFF));
+        encoded.push_back(static_cast<uint8_t>((bit_position >> 8) & 0xFF));
+        return encoded;
+    }
+    
+    std::vector<Field> perform_point_operations(const AG& P, const AG& Q, bool is_subtraction, int doubling_count) {
+        std::vector<Field> field_ops;
+        
+        // Simulate field operations for point arithmetic
+        // Each coordinate requires multiple field operations
+        if constexpr (requires { P.x(); P.y(); P.z(); }) {
+            // Jacobian/Extended coordinates
+            auto px = P.x(), py = P.y(), pz = P.z();
+            auto qx = Q.x(), qy = Q.y(), qz = Q.z();
+            
+            // Point addition/subtraction requires ~12-15 field operations
+            for (int i = 0; i < (is_subtraction ? 13 : 12); ++i) {
+                field_ops.push_back(px + qx); // Dummy field operation
+            }
+        } else if constexpr (requires { P.x(); P.y(); }) {
+            // Affine coordinates
+            auto px = P.x(), py = P.y();
+            auto qx = Q.x(), qy = Q.y();
+            
+            // Affine addition/subtraction requires ~2-3 field operations + inversion
+            for (int i = 0; i < (is_subtraction ? 4 : 3); ++i) {
+                field_ops.push_back(px + qx); // Dummy field operation
+            }
+        }
+        
+        return field_ops;
+    }
+    
+    std::vector<Field> perform_doubling_operations(const AG& P) {
+        std::vector<Field> field_ops;
+        
+        // Point doubling operations
+        if constexpr (requires { P.x(); P.y(); P.z(); }) {
+            // Jacobian/Extended doubling requires ~8-10 field operations
+            auto px = P.x(), py = P.y(), pz = P.z();
+            for (int i = 0; i < 8; ++i) {
+                field_ops.push_back(px + py); // Dummy field operation
+            }
+        } else if constexpr (requires { P.x(); P.y(); }) {
+            // Affine doubling requires ~2 field operations + inversion
+            auto px = P.x(), py = P.y();
+            for (int i = 0; i < 3; ++i) {
+                field_ops.push_back(px + py); // Dummy field operation
+            }
+        }
+        
+        return field_ops;
     }
 };
 
@@ -1160,10 +1276,121 @@ public:
     std::vector<ChunkConstraints> process_in_chunks(const AG& e, const Scalar& s) {
         std::vector<ChunkConstraints> chunks;
         
-        // Each chunk creates at most 8 simple constraints (4 bits × 2 ops max)
-        // All constraints are degree ≤ 2 in multilinear polynomial form
+        AG P = AG::additive_identity();
+        AG Q = e;
         
-        return chunks; // Implementation processes scalar in small chunks
+        int QisQdouble = 0;
+        int state = 0;
+        std::size_t bit_count = 0;
+        
+        ChunkConstraints current_chunk;
+        current_chunk.input_point = P;
+        
+        // Process scalar in chunks of CHUNK_SIZE bits
+        std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
+            // Each chunk creates at most 8 simple constraints (4 bits × 2 ops max)
+            // All constraints are degree ≤ 2 in multilinear polynomial form
+            
+            switch(state) {
+                case 0:
+                    if (bit) {
+                        // Create constraint for P - Q operation
+                        AG intermediate = P - Q;
+                        current_chunk.constraints.push_back({
+                            SimpleConstraint<AG>::POINT_SUB,
+                            {P, Q},
+                            intermediate
+                        });
+                        
+                        P = intermediate;
+                        QisQdouble = 2;
+                        state = 11;
+                    } else {
+                        // Create constraint for P + Q operation
+                        AG intermediate = P + Q;
+                        current_chunk.constraints.push_back({
+                            SimpleConstraint<AG>::POINT_ADD,
+                            {P, Q},
+                            intermediate
+                        });
+                        
+                        P = intermediate;
+                        QisQdouble = 2;
+                        state = 0;
+                    }
+                    break;
+                    
+                case 11:
+                    if (bit) {
+                        QisQdouble += 1;
+                    } else {
+                        // Perform accumulated doublings
+                        for (int i = 0; i < QisQdouble; ++i) {
+                            AG doubled_Q = Q.douple();
+                            current_chunk.constraints.push_back({
+                                SimpleConstraint<AG>::POINT_DOUBLE,
+                                {Q},
+                                doubled_Q
+                            });
+                            Q = doubled_Q;
+                        }
+                        
+                        // Add final point addition
+                        AG intermediate = P + Q;
+                        current_chunk.constraints.push_back({
+                            SimpleConstraint<AG>::POINT_ADD,
+                            {P, Q},
+                            intermediate
+                        });
+                        
+                        P = intermediate;
+                        QisQdouble = 2;
+                        state = 0;
+                    }
+                    break;
+            }
+            
+            bit_count++;
+            
+            // Complete chunk when we reach CHUNK_SIZE bits or significant computation
+            if (bit_count % CHUNK_SIZE == 0 || current_chunk.constraints.size() >= 8) {
+                current_chunk.output_point = P;
+                chunks.push_back(current_chunk);
+                
+                // Start new chunk
+                current_chunk = ChunkConstraints{};
+                current_chunk.input_point = P;
+            }
+        });
+        
+        // Handle final operations and remaining chunk
+        if (QisQdouble > 0) {
+            for (int i = 0; i < QisQdouble; ++i) {
+                AG doubled_Q = Q.douple();
+                current_chunk.constraints.push_back({
+                    SimpleConstraint<AG>::POINT_DOUBLE,
+                    {Q},
+                    doubled_Q
+                });
+                Q = doubled_Q;
+            }
+            
+            AG final_result = P + Q;
+            current_chunk.constraints.push_back({
+                SimpleConstraint<AG>::POINT_ADD,
+                {P, Q},
+                final_result
+            });
+            P = final_result;
+        }
+        
+        // Add final chunk if it has constraints
+        if (!current_chunk.constraints.empty()) {
+            current_chunk.output_point = P;
+            chunks.push_back(current_chunk);
+        }
+        
+        return chunks;
     }
 };
 
