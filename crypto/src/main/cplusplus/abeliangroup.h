@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <vector>
+#include <cstdint>
 
 namespace blacknet::crypto {
 
@@ -200,7 +201,7 @@ public:
     struct BitGranularConstraintSystem {
         std::vector<std::vector<bool>> bit_constraints;        // Cheap commits!
         std::vector<std::vector<Field>> field_constraints;     // Expensive commits
-        std::vector<std::vector<u8>> small_field_constraints;  // Goldilocks-friendly
+        std::vector<std::vector<uint8_t>> small_field_constraints;  // Goldilocks-friendly
         // Optimize for bit-width, not degree!
     };
     
@@ -225,7 +226,7 @@ public:
     }
     
 private:
-    std::vector<u8> encode_goldilocks_operation(bool bit) {
+    std::vector<uint8_t> encode_goldilocks_operation(bool bit) {
         // Encode operations using Goldilocks prime for efficiency
         return {}; // Implementation depends on specific bit operation
     }

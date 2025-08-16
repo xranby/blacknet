@@ -22,6 +22,7 @@
 #include "pastacurves.h"
 #include "abeliangroup.h"
 #include "primefield.h"
+#include <chrono>
 
 using namespace blacknet::crypto;
 

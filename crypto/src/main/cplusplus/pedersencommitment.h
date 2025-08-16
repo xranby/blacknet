@@ -23,6 +23,7 @@
 
 #include "vectordense.h"
 #include "abeliangroup.h"
+#include <cstdint>
 
 namespace blacknet::crypto {
 
