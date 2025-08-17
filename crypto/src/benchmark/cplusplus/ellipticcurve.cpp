@@ -259,3 +259,28 @@ static void BM_PostQuantumSecurityOverhead(benchmark::State& state) {
 }
 BENCHMARK(BM_PostQuantumSecurityOverhead<PallasGroupJacobian>);
 BENCHMARK(BM_PostQuantumSecurityOverhead<Edwards25519GroupExtended>);
+
+// Performance comparison: All constraint generation approaches
+template<typename ECG>
+static void BM_AllConstraintApproaches(benchmark::State& state) {
+    auto a = ECG::random(rng);
+    auto b = ECG::Scalar::random(rng);
+    
+    for (auto _ : state) {
+        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> multi_mult;
+        auto multi_constraints = multi_mult.multiply_to_constraints(a, b);
+        
+        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
+        auto neo_cs = neo_mult.generate_constraint_system(a, b);
+        
+        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> stream_mult;
+        auto stream_chunks = stream_mult.process_in_chunks(a, b);
+        
+        benchmark::DoNotOptimize(multi_constraints);
+        benchmark::DoNotOptimize(neo_cs);
+        benchmark::DoNotOptimize(stream_chunks);
+        benchmark::ClobberMemory();
+    }
+}
+BENCHMARK(BM_AllConstraintApproaches<PallasGroupJacobian>);
+BENCHMARK(BM_AllConstraintApproaches<Edwards25519GroupExtended>);

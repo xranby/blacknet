@@ -2069,6 +2069,441 @@ private:
 
 }
 
+// ==================== ZKVM-OPTIMIZED ADDSUBCHAIN-E ====================
+
+// Sequential Hash-List Memory for zkVM Efficiency
+template<typename Field>
+class SequentialHashListMemory {
+public:
+    struct MemoryCell {
+        Field value;
+        Field hash_prev;  // Hash of previous cell for sequential access
+        Field hash_self;  // Hash of this cell
+        std::size_t index;
+        
+        // S-expression style: (value . prev_hash)
+        Field to_sexp_hash() const {
+            return hash_function(value, hash_prev);
+        }
+    };
+    
+private:
+    std::vector<MemoryCell> memory_list;
+    Field current_hash = Field::zero();
+    
+    // Simple hash function for demonstration (use Poseidon in practice)
+    Field hash_function(const Field& a, const Field& b) const {
+        return a + b * Field(7) + Field(13); // Simplified hash
+    }
+    
+public:
+    // Sequential write - each write depends on previous hash
+    std::size_t write(const Field& value) {
+        MemoryCell cell;
+        cell.value = value;
+        cell.hash_prev = current_hash;
+        cell.index = memory_list.size();
+        cell.hash_self = hash_function(value, current_hash);
+        
+        memory_list.push_back(cell);
+        current_hash = cell.hash_self;
+        return cell.index;
+    }
+    
+    // Sequential read - verifies hash chain
+    Field read(std::size_t index) const {
+        if (index >= memory_list.size()) return Field::zero();
+        
+        const auto& cell = memory_list[index];
+        // In zkVM, this would generate constraint: hash_self = hash(value, hash_prev)
+        auto expected_hash = hash_function(cell.value, cell.hash_prev);
+        assert(expected_hash == cell.hash_self); // Would be zkVM constraint
+        
+        return cell.value;
+    }
+    
+    // Get current hash state (for zkVM state commitment)
+    Field get_state_hash() const {
+        return current_hash;
+    }
+    
+    // Generate sequential memory constraints for zkVM
+    std::vector<Field> generate_memory_constraints() const {
+        std::vector<Field> constraints;
+        Field running_hash = Field::zero();
+        
+        for (const auto& cell : memory_list) {
+            // Constraint: hash_self = hash(value, hash_prev)
+            constraints.push_back(cell.hash_self - hash_function(cell.value, cell.hash_prev));
+            
+            // Constraint: hash_prev = previous running_hash
+            constraints.push_back(cell.hash_prev - running_hash);
+            
+            running_hash = cell.hash_self;
+        }
+        
+        return constraints;
+    }
+};
+
+// Additive Constraint System (CCS) for ADDSUBCHAIN-E
+template<typename AG, typename Scalar, typename Field = typename AG::Base>
+class AdditiveConstraintADDSUBCHAIN {
+public:
+    struct AdditiveConstraint {
+        // Instead of R1CS: aA * bB = cC
+        // Use additive form: sum(coeff_i * var_i) = 0
+        std::vector<Field> coefficients;
+        std::vector<std::size_t> variable_indices;
+        Field constant_term = Field::zero();
+        
+        // For elliptic curve operations: P.x * slope² + Q.x * slope² - R.x * slope² = result_x
+        enum Type {
+            ADDITIVE_POINT_RELATION,  // Natural additive constraint
+            SEQUENTIAL_SLOPE_CHAIN,   // Chain of slope calculations
+            HASH_MEMORY_CONSISTENCY   // Sequential memory verification
+        } type;
+    };
+    
+    struct CCSSystem {
+        std::vector<AdditiveConstraint> additive_constraints;
+        SequentialHashListMemory<Field> memory;
+        std::vector<Field> public_inputs;
+        std::vector<Field> private_witnesses;
+        
+        // zkVM efficiency metrics
+        std::size_t sequential_memory_accesses = 0;
+        std::size_t additive_constraint_count = 0;
+        double zkvm_efficiency_score = 0.0;
+    };
+    
+    // Generate zkVM-optimized additive constraints for ADDSUBCHAIN-E
+    CCSSystem generate_additive_constraint_system(const AG& e, const Scalar& s) {
+        CCSSystem ccs;
+        
+        AG P = AG::additive_identity();
+        AG Q = e;
+        
+        // Store initial point in sequential memory
+        auto q_x_idx = ccs.memory.write(Q.x());
+        auto q_y_idx = ccs.memory.write(Q.y());
+        auto p_x_idx = ccs.memory.write(P.x());
+        auto p_y_idx = ccs.memory.write(P.y());
+        
+        ccs.sequential_memory_accesses += 4;
+        
+        int QisQdouble = 0;
+        int state = 0;
+        std::size_t constraint_count = 0;
+        
+        // Process scalar with natural additive constraints
+        std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
+            switch(state) {
+                case 0:
+                    if (bit) {
+                        // Natural additive constraint: P.x + (-Q.x) + slope₁² = R.x
+                        auto result = generate_additive_point_constraint(P, Q, true, ccs.memory);
+                        ccs.additive_constraints.push_back(result.constraint);
+                        
+                        P = result.output_point;
+                        QisQdouble = 2;
+                        state = 11;
+                        constraint_count++;
+                    } else {
+                        // Natural additive constraint: P.x + Q.x + slope₂² = R.x
+                        auto result = generate_additive_point_constraint(P, Q, false, ccs.memory);
+                        ccs.additive_constraints.push_back(result.constraint);
+                        
+                        P = result.output_point;
+                        QisQdouble = 2;
+                        state = 0;
+                        constraint_count++;
+                    }
+                    break;
+                    
+                case 11:
+                    if (bit) {
+                        QisQdouble += 1;
+                    } else {
+                        // Chain of doubling operations as additive constraints
+                        for (int i = 0; i < QisQdouble; ++i) {
+                            auto result = generate_additive_doubling_constraint(Q, ccs.memory);
+                            ccs.additive_constraints.push_back(result.constraint);
+                            Q = result.output_point;
+                            constraint_count++;
+                        }
+                        
+                        auto result = generate_additive_point_constraint(P, Q, false, ccs.memory);
+                        ccs.additive_constraints.push_back(result.constraint);
+                        P = result.output_point;
+                        QisQdouble = 2;
+                        state = 0;
+                        constraint_count++;
+                    }
+                    break;
+            }
+        });
+        
+        // Final operations with additive constraints
+        if (QisQdouble > 0) {
+            for (int i = 0; i < QisQdouble; ++i) {
+                auto result = generate_additive_doubling_constraint(Q, ccs.memory);
+                ccs.additive_constraints.push_back(result.constraint);
+                Q = result.output_point;
+                constraint_count++;
+            }
+            
+            auto result = generate_additive_point_constraint(P, Q, false, ccs.memory);
+            ccs.additive_constraints.push_back(result.constraint);
+            constraint_count++;
+        }
+        
+        // Add memory consistency constraints
+        auto memory_constraints = ccs.memory.generate_memory_constraints();
+        for (const auto& mem_constraint : memory_constraints) {
+            AdditiveConstraint constraint;
+            constraint.type = AdditiveConstraint::HASH_MEMORY_CONSISTENCY;
+            constraint.constant_term = mem_constraint;
+            ccs.additive_constraints.push_back(constraint);
+        }
+        
+        ccs.additive_constraint_count = constraint_count;
+        ccs.zkvm_efficiency_score = calculate_zkvm_efficiency(ccs);
+        
+        return ccs;
+    }
+    
+private:
+    struct ConstraintResult {
+        AdditiveConstraint constraint;
+        AG output_point;
+    };
+    
+    // Generate natural additive constraint for point operations
+    ConstraintResult generate_additive_point_constraint(const AG& P, const AG& Q, bool is_subtraction,
+                                                       SequentialHashListMemory<Field>& memory) {
+        ConstraintResult result;
+        
+        if constexpr (requires { P.x(); P.y(); Q.x(); Q.y(); }) {
+            // Elliptic curve addition in additive constraint form
+            Field slope;
+            if (P == Q) {
+                // Point doubling: slope = (3*P.x² + a) / (2*P.y)
+                slope = (Field(3) * P.x() * P.x()) * P.y().invert().value() * Field(2).invert().value();
+            } else {
+                // Point addition: slope = (Q.y - P.y) / (Q.x - P.x)
+                auto dy = is_subtraction ? (P.y() - Q.y()) : (Q.y() - P.y());
+                auto dx = Q.x() - P.x();
+                slope = dy * dx.invert().value();
+            }
+            
+            // Natural additive constraint: P.x * slope² + Q.x * slope² - R.x * slope² = result_x
+            // Restructured as: coeff₁*P.x + coeff₂*Q.x + coeff₃*R.x = 0
+            
+            Field slope_squared = slope * slope;
+            AG R = is_subtraction ? (P - Q) : (P + Q);
+            
+            // Store intermediate values in sequential memory
+            auto slope_idx = memory.write(slope);
+            auto r_x_idx = memory.write(R.x());
+            auto r_y_idx = memory.write(R.y());
+            
+            // Create additive constraint
+            result.constraint.type = AdditiveConstraint::ADDITIVE_POINT_RELATION;
+            result.constraint.coefficients = {slope_squared, 
+                                            is_subtraction ? -slope_squared : slope_squared, 
+                                            -slope_squared};
+            result.constraint.variable_indices = {
+                memory.write(P.x()), 
+                memory.write(Q.x()), 
+                r_x_idx
+            };
+            
+            result.output_point = R;
+        } else {
+            // Generic group operation - simplified additive constraint
+            AG R = is_subtraction ? (P - Q) : (P + Q);
+            result.output_point = R;
+            
+            // Simplified constraint for non-curve groups
+            result.constraint.type = AdditiveConstraint::ADDITIVE_POINT_RELATION;
+            result.constraint.constant_term = Field::zero();
+        }
+        
+        return result;
+    }
+    
+    // Generate additive constraint for point doubling
+    ConstraintResult generate_additive_doubling_constraint(const AG& P, 
+                                                          SequentialHashListMemory<Field>& memory) {
+        ConstraintResult result;
+        
+        if constexpr (requires { P.x(); P.y(); }) {
+            // Point doubling with natural additive constraint
+            Field slope = (Field(3) * P.x() * P.x()) * P.y().invert().value() * Field(2).invert().value();
+            AG R = P.douple();
+            
+            // Natural constraint: 2*P.x * slope² - R.x * slope² = result_x
+            Field slope_squared = slope * slope;
+            
+            auto slope_idx = memory.write(slope);
+            auto r_x_idx = memory.write(R.x());
+            auto r_y_idx = memory.write(R.y());
+            
+            result.constraint.type = AdditiveConstraint::ADDITIVE_POINT_RELATION;
+            result.constraint.coefficients = {Field(2) * slope_squared, -slope_squared};
+            result.constraint.variable_indices = {memory.write(P.x()), r_x_idx};
+            
+            result.output_point = R;
+        } else {
+            // Generic doubling
+            AG R = P.douple();
+            result.output_point = R;
+            
+            result.constraint.type = AdditiveConstraint::ADDITIVE_POINT_RELATION;
+            result.constraint.constant_term = Field::zero();
+        }
+        
+        return result;
+    }
+    
+    // Calculate zkVM efficiency based on additive constraints and sequential memory
+    double calculate_zkvm_efficiency(const CCSSystem& ccs) const {
+        // Factors that improve zkVM efficiency:
+        // 1. Additive constraints (vs multiplicative R1CS)
+        // 2. Sequential memory access (vs random access)
+        // 3. Natural constraint structure (vs artificial)
+        
+        double additive_bonus = ccs.additive_constraint_count * 0.8;  // Additive is more efficient
+        double memory_bonus = ccs.sequential_memory_accesses * 0.6;   // Sequential access efficient
+        double constraint_density = static_cast<double>(ccs.additive_constraint_count) / 
+                                   std::max(1UL, ccs.sequential_memory_accesses);
+        
+        return additive_bonus + memory_bonus + constraint_density;
+    }
+};
+
+// zkVM-Optimized ADDSUBCHAIN-E Implementation
+template<typename AG, typename Scalar, typename Field = typename AG::Base>
+class ZkVMOptimizedADDSUBCHAIN {
+public:
+    using CCSSystem = typename AdditiveConstraintADDSUBCHAIN<AG, Scalar, Field>::CCSSystem;
+    
+    struct ZkVMResult {
+        AG result;
+        CCSSystem constraint_system;
+        std::size_t total_memory_operations;
+        std::size_t total_additive_constraints;
+        double zkvm_efficiency_score;
+        Field final_memory_state;
+    };
+    
+    // Main zkVM-optimized scalar multiplication
+    ZkVMResult multiply_zkvm_optimized(const AG& e, const Scalar& s) {
+        AdditiveConstraintADDSUBCHAIN<AG, Scalar, Field> additive_engine;
+        auto ccs = additive_engine.generate_additive_constraint_system(e, s);
+        
+        // Compute actual result (would be proven in zkVM)
+        AG result = compute_addsubchain_result(e, s);
+        
+        return {
+            result,
+            std::move(ccs),
+            ccs.sequential_memory_accesses,
+            ccs.additive_constraint_count,
+            ccs.zkvm_efficiency_score,
+            ccs.memory.get_state_hash()
+        };
+    }
+    
+    // Verify zkVM proof (simplified)
+    bool verify_zkvm_proof(const ZkVMResult& result, const AG& expected_result) {
+        // In real zkVM, this would verify the additive constraints and memory consistency
+        bool result_correct = (result.result == expected_result);
+        bool memory_consistent = verify_memory_consistency(result.constraint_system.memory);
+        bool constraints_satisfied = verify_additive_constraints(result.constraint_system);
+        
+        return result_correct && memory_consistent && constraints_satisfied;
+    }
+    
+private:
+    AG compute_addsubchain_result(const AG& e, const Scalar& s) {
+        // Standard ADDSUBCHAIN-E computation for verification
+        AG P = AG::additive_identity();
+        AG Q = e;
+        int QisQdouble = 0;
+        int state = 0;
+        
+        std::ranges::for_each(s.bitsBegin(), s.bitsEnd(), [&](bool bit) {
+            switch(state) {
+                case 0:
+                    if(bit) {
+                        state = 1;
+                    } else {
+                        QisQdouble += 1;
+                    }
+                    break;
+                case 1:
+                    for (int i = 0; i < QisQdouble; ++i) {
+                        Q = Q.douple();
+                    }
+                    if(bit) {
+                        P = P - Q;
+                        QisQdouble = 2;
+                        state = 11;
+                    } else {
+                        P = P + Q;
+                        QisQdouble = 2;
+                        state = 0;
+                    }
+                    break;
+                case 11:
+                    if(bit) {
+                        QisQdouble += 1;
+                    } else {
+                        state = 1;
+                    }
+                    break;
+            }
+        });
+        
+        if(state != 0) {
+            for (int i = 0; i < QisQdouble; ++i) {
+                Q = Q.douple();
+            }
+            P = P + Q;
+        }
+        
+        return P;
+    }
+    
+    bool verify_memory_consistency(const SequentialHashListMemory<Field>& memory) {
+        auto constraints = memory.generate_memory_constraints();
+        for (const auto& constraint : constraints) {
+            if (constraint != Field::zero()) {
+                return false; // Constraint not satisfied
+            }
+        }
+        return true;
+    }
+    
+    bool verify_additive_constraints(const CCSSystem& ccs) {
+        for (const auto& constraint : ccs.additive_constraints) {
+            Field sum = constraint.constant_term;
+            for (std::size_t i = 0; i < constraint.coefficients.size(); ++i) {
+                if (i < constraint.variable_indices.size()) {
+                    auto var_value = ccs.memory.read(constraint.variable_indices[i]);
+                    sum += constraint.coefficients[i] * var_value;
+                }
+            }
+            if (sum != Field::zero()) {
+                return false; // Additive constraint not satisfied
+            }
+        }
+        return true;
+    }
+};
+
 }
 
 #endif
