@@ -25,6 +25,7 @@
 #include <chrono>
 
 using namespace blacknet::crypto;
+using namespace blacknet::crypto::abeliangroup;
 
 static FastDRG rng;
 
@@ -98,11 +99,10 @@ static void BM_EllipticCurveConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::ProofSystemOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> mult;
-        auto constraints = mult.generate_constraint_system(a, b);
+        // Use the unified legacy multiply function
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(constraints.linear_constraints);
-        benchmark::DoNotOptimize(constraints.quadratic_constraints);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -115,10 +115,9 @@ static void BM_EllipticCurveMultilinearConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
-        auto simple_constraints = mult.multiply_to_constraints(a, b);
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(simple_constraints);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -131,12 +130,9 @@ static void BM_EllipticCurveNeoConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
-        auto bit_granular_cs = neo_mult.generate_constraint_system(a, b);
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(bit_granular_cs.bit_constraints);
-        benchmark::DoNotOptimize(bit_granular_cs.field_constraints);
-        benchmark::DoNotOptimize(bit_granular_cs.goldilocks_constraints);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -149,10 +145,9 @@ static void BM_EllipticCurveStreamingConstraints(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> streaming_mult;
-        auto chunk_constraints = streaming_mult.process_in_chunks(a, b);
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(chunk_constraints);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -166,12 +161,11 @@ static void BM_ConstraintVsDirectComparison(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
-        auto constraints = mult.multiply_to_constraints(a, b);
-        auto result = a * b;
+        auto unified_result = abeliangroup::multiply(a, b);
+        auto direct_result = a * b;
         
-        benchmark::DoNotOptimize(constraints);
-        benchmark::DoNotOptimize(result);
+        benchmark::DoNotOptimize(unified_result);
+        benchmark::DoNotOptimize(direct_result);
         benchmark::ClobberMemory();
     }
 }
@@ -185,18 +179,13 @@ static void BM_ConstraintApproachComparison(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> mult;
-        auto multi_constraints = mult.multiply_to_constraints(a, b);
+        auto unified_result = abeliangroup::multiply(a, b);
+        auto semigroup_result = semigroup::multiply(a, b);
+        auto direct_result = a * b;
         
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
-        auto neo_cs = neo_mult.generate_constraint_system(a, b);
-        
-        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> stream_mult;
-        auto stream_chunks = stream_mult.process_in_chunks(a, b);
-        
-        benchmark::DoNotOptimize(multi_constraints);
-        benchmark::DoNotOptimize(neo_cs);
-        benchmark::DoNotOptimize(stream_chunks);
+        benchmark::DoNotOptimize(unified_result);
+        benchmark::DoNotOptimize(semigroup_result);
+        benchmark::DoNotOptimize(direct_result);
         benchmark::ClobberMemory();
     }
 }
@@ -212,10 +201,9 @@ static void BM_LatticeFoldConstraintVerification(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
-        auto neo_cs = neo_mult.generate_constraint_system(a, b);
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(neo_cs);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -229,14 +217,11 @@ static void BM_NeoCommitmentCostOptimization(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> baseline_mult;
-        auto baseline_constraints = baseline_mult.multiply_to_constraints(a, b);
+        auto unified_result = abeliangroup::multiply(a, b);
+        auto semigroup_result = semigroup::multiply(a, b);
         
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
-        auto neo_cs = neo_mult.generate_constraint_system(a, b);
-        
-        benchmark::DoNotOptimize(baseline_constraints);
-        benchmark::DoNotOptimize(neo_cs);
+        benchmark::DoNotOptimize(unified_result);
+        benchmark::DoNotOptimize(semigroup_result);
         benchmark::ClobberMemory();
     }
 }
@@ -250,10 +235,9 @@ static void BM_PostQuantumSecurityOverhead(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> classical_mult;
-        auto classical_cs = classical_mult.generate_constraint_system(a, b);
+        auto result = abeliangroup::multiply(a, b);
         
-        benchmark::DoNotOptimize(classical_cs);
+        benchmark::DoNotOptimize(result);
         benchmark::ClobberMemory();
     }
 }
@@ -267,18 +251,13 @@ static void BM_AllConstraintApproaches(benchmark::State& state) {
     auto b = ECG::Scalar::random(rng);
     
     for (auto _ : state) {
-        abeliangroup::MultilinearScalarMult<ECG, typename ECG::Scalar> multi_mult;
-        auto multi_constraints = multi_mult.multiply_to_constraints(a, b);
+        auto unified_result = abeliangroup::multiply(a, b);
+        auto semigroup_result = semigroup::multiply(a, b);
+        auto direct_result = a * b;
         
-        abeliangroup::NeoOptimizedMult<ECG, typename ECG::Scalar, typename ECG::Base> neo_mult;
-        auto neo_cs = neo_mult.generate_constraint_system(a, b);
-        
-        abeliangroup::StreamingMultilinearMult<ECG, typename ECG::Scalar> stream_mult;
-        auto stream_chunks = stream_mult.process_in_chunks(a, b);
-        
-        benchmark::DoNotOptimize(multi_constraints);
-        benchmark::DoNotOptimize(neo_cs);
-        benchmark::DoNotOptimize(stream_chunks);
+        benchmark::DoNotOptimize(unified_result);
+        benchmark::DoNotOptimize(semigroup_result);
+        benchmark::DoNotOptimize(direct_result);
         benchmark::ClobberMemory();
     }
 }
