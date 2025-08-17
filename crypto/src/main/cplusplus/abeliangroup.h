@@ -871,6 +871,80 @@ public:
     }
 };
 
+template<typename AG, typename Scalar, typename Field>
+class ProofSystemOptimizedMult {
+public:
+    struct ProofConstraintSystem {
+        std::vector<SimpleConstraint<AG>> proof_constraints;
+        std::vector<Field> field_constraints;
+        std::size_t constraint_depth = 0;
+        double proof_efficiency = 0.0;
+    };
+    
+    ProofConstraintSystem generate_proof_constraints(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
+template<typename AG, typename Scalar>
+class SafeMultiplication {
+public:
+    std::vector<SimpleConstraint<AG>> multiply_safe(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
+template<typename AG, typename Scalar>
+class UnifiedMultiplication {
+public:
+    std::vector<SimpleConstraint<AG>> multiply_unified(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
+template<typename AG, typename Scalar, typename Field>
+class StreamingMultilinearMult {
+public:
+    struct StreamingConstraintSystem {
+        std::vector<SimpleConstraint<AG>> streaming_constraints;
+        std::vector<Field> field_constraints;
+        std::size_t stream_depth = 0;
+    };
+    
+    StreamingConstraintSystem generate_streaming_constraints(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
+template<typename AG, typename Scalar>
+class AdditiveConstraintADDSUBCHAIN {
+public:
+    std::vector<SimpleConstraint<AG>> generate_additive_constraints(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
+template<typename AG, typename Scalar, typename Field>
+class ZkVMOptimizedADDSUBCHAIN {
+public:
+    struct ZkVMConstraintSystem {
+        std::vector<SimpleConstraint<AG>> zkvm_constraints;
+        std::vector<Field> field_constraints;
+        std::size_t memory_accesses = 0;
+        double zkvm_efficiency = 0.0;
+    };
+    
+    ZkVMConstraintSystem generate_zkvm_constraints(const AG& e, const Scalar& s) {
+        // Simple fallback - no actual constraint generation
+        return {};
+    }
+};
+
 } // namespace blacknet::crypto::abeliangroup
 
 #endif // BLACKNET_CRYPTO_ABELIANGROUP_H

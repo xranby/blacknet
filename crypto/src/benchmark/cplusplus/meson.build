@@ -18,6 +18,7 @@
 crypto_benchmark_sources = [
     'ajtaicommitment.cpp',
     'benchmark.cpp',
+    'bfv.cpp',
     'blacklemon.cpp',
     'cyclotomicring.cpp',
     'ellipticcurve.cpp',
