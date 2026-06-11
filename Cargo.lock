@@ -166,6 +166,14 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c4512299f36f043ab09a583e57bceb5a5aab7a73db1805848e8fef3c9e8c78b3"
 
 [[package]]
+name = "blacknet-arith"
+version = "0.3.0"
+dependencies = [
+ "blacknet-crypto",
+ "blacknet-vm",
+]
+
+[[package]]
 name = "blacknet-compat"
 version = "0.3.0"
 dependencies = [
@@ -234,7 +242,9 @@ version = "0.3.0"
 dependencies = [
  "blacknet-crypto",
  "blacknet-serialization",
+ "blacknet-snark",
  "blacknet-time",
+ "blacknet-vm",
  "blake2",
  "bytemuck",
  "criterion",
@@ -291,6 +301,15 @@ dependencies = [
  "blacknet-io",
  "serde",
  "serde_core",
+]
+
+[[package]]
+name = "blacknet-snark"
+version = "0.3.0"
+dependencies = [
+ "blacknet-arith",
+ "blacknet-crypto",
+ "blacknet-vm",
 ]
 
 [[package]]

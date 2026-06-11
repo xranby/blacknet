@@ -32,7 +32,9 @@ categories.workspace = true
 
 [dependencies]
 blacknet-crypto.workspace = true
+blacknet-vm.workspace = true
 blacknet-serialization.workspace = true
+blacknet-snark.workspace = true
 blacknet-time.workspace = true
 blake2.workspace = true
 bytemuck.workspace = true
@@ -77,3 +79,7 @@ path = "src/test/rust/transaction.rs"
 name = "ed25519"
 path = "src/benchmark/rust/ed25519.rs"
 harness = false
+
+[[test]]
+name = "verifiedcomputation"
+path = "src/test/rust/verifiedcomputation.rs"

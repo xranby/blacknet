@@ -31,3 +31,4 @@ pub mod multisig;
 pub mod proofofstake;
 pub mod timelock;
 pub mod transaction;
+pub mod verifiedcomputation;

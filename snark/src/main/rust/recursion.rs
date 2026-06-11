@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Pavel Vasin
+ * Copyright (c) 2026 Blacknet contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -15,6 +15,18 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-pub mod machine;
-pub mod register;
-pub mod registerfile;
+//! Milestone 5 (stub): the folding verifier expressed as constraints, to be
+//! embedded into the step circuit for true IVC. Blocked on porting the fold
+//! arithmetic of [`crate::fold`] to `blacknet_crypto::circuit::builder` so
+//! the same description yields circuit and assigner, as the crypto crate
+//! does for sumcheck and Poseidon2.
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum Error {
+    Unimplemented,
+}
+
+/// Will return the CCS of the fold verifier relation.
+pub const fn fold_verifier_circuit() -> Result<(), Error> {
+    Err(Error::Unimplemented)
+}

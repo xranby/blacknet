@@ -1,22 +1,14 @@
 #
-# Copyright (c) 2025 Pavel Vasin
+# Copyright (c) 2026 Blacknet contributors
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Lesser General Public License as published by
 # the Free Software Foundation, either version 3 of the License, or
 # (at your option) any later version.
 #
-# This program is distributed in the hope that it will be useful,
-# but WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
-# GNU Lesser General Public License for more details.
-#
-# You should have received a copy of the GNU Lesser General Public License
-# along with this program. If not, see <https://www.gnu.org/licenses/>.
-#
 
 [package]
-name = "blacknet-vm"
+name = "blacknet-arith"
 version.workspace = true
 authors.workspace = true
 edition.workspace = true
@@ -32,6 +24,7 @@ categories.workspace = true
 
 [dependencies]
 blacknet-crypto.workspace = true
+blacknet-vm.workspace = true
 
 [lints]
 workspace = true
@@ -41,5 +34,9 @@ doctest = false
 path = "src/main/rust/lib.rs"
 
 [[test]]
-name = "machine"
-path = "src/test/rust/machine.rs"
+name = "trace"
+path = "src/test/rust/trace.rs"
+
+[[test]]
+name = "multiset"
+path = "src/test/rust/multiset.rs"

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Pavel Vasin
+ * Copyright (c) 2026 Blacknet contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -15,6 +15,11 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-pub mod machine;
-pub mod register;
-pub mod registerfile;
+//! Proving and verifying VM execution. The `verify` path in [`proof`] is
+//! the consensus-critical surface; everything else is prover-side.
+
+pub mod commitment;
+pub mod fold;
+pub mod proof;
+pub mod recursion;
+pub mod zk;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Pavel Vasin
+ * Copyright (c) 2026 Blacknet contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -15,6 +15,17 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-pub mod machine;
-pub mod register;
-pub mod registerfile;
+//! Milestone 5 (stub): zero-knowledge layer. v0 proofs are transparent —
+//! the witness is revealed. The ZK upgrade blinds the witness commitment
+//! (Ajtai with discrete Gaussian masking via `blacknet_crypto::random`) and
+//! masks the final sumcheck with a random polynomial. No API is stabilized
+//! until commitments replace transparent witnesses in [`crate::proof`].
+
+#[derive(Debug, Eq, PartialEq)]
+pub enum Error {
+    Unimplemented,
+}
+
+pub const fn blind() -> Result<(), Error> {
+    Err(Error::Unimplemented)
+}

@@ -18,6 +18,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "arith",
     "compat",
     "crypto",
     "daemon",
@@ -27,12 +28,14 @@ members = [
     "log",
     "network",
     "serialization",
+    "snark",
     "time",
     "vm",
     "wallet",
 ]
 
 [workspace.dependencies]
+blacknet-arith = { path = "arith" }
 blacknet-compat = { path = "compat" }
 blacknet-crypto = { path = "crypto" }
 blacknet-io = { path = "io", default-features = false }
@@ -41,6 +44,7 @@ blacknet-kernel = { path = "kernel" }
 blacknet-log = { path = "log" }
 blacknet-network = { path = "network" }
 blacknet-serialization = { path = "serialization" }
+blacknet-snark = { path = "snark" }
 blacknet-time = { path = "time" }
 blacknet-vm = { path = "vm" }
 blacknet-wallet = { path = "wallet" }

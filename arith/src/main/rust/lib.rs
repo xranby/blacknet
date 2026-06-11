@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2025 Pavel Vasin
+ * Copyright (c) 2026 Blacknet contributors
  *
  * This program is free software: you can redistribute it and/or modify
  * it under the terms of the GNU Lesser General Public License as published by
@@ -15,6 +15,8 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-pub mod machine;
-pub mod register;
-pub mod registerfile;
+//! Arithmetization of `blacknet-vm` execution into constraint systems.
+
+pub mod multiset;
+pub mod r1cs;
+pub mod trace;

@@ -34,6 +34,12 @@ pub struct General<T> {
     value: T,
 }
 
+impl<T> General<T> {
+    pub const fn new(value: T) -> Self {
+        Self { value }
+    }
+}
+
 impl<T: Copy> Register<T> for General<T> {
     fn read(&self) -> T {
         self.value
