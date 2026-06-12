@@ -41,3 +41,7 @@ path = "src/test/rust/proof.rs"
 [[test]]
 name = "fold"
 path = "src/test/rust/fold.rs"
+
+[[test]]
+name = "committedfold"
+path = "src/test/rust/committedfold.rs"

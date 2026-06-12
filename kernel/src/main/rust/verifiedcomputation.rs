@@ -113,3 +113,45 @@ impl ProgramRegistry {
 pub const fn compute_fee(proof_bytes: usize) -> u64 {
     params::VERIFY_FEE + params::BYTE_FEE * proof_bytes as u64
 }
+
+/// A cache of already verified Compute transactions, keyed by transaction
+/// hash. Txpool admission verifies once; block validation consults the
+/// cache and re-verifies only on a miss — the same pattern as signature
+/// caches. Entries are only inserted after successful verification, so a
+/// cache hit is as authoritative as verification itself.
+#[derive(Default)]
+pub struct VerificationCache {
+    verified: alloc::collections::BTreeSet<[u8; 32]>,
+}
+
+impl VerificationCache {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    #[must_use]
+    pub fn contains(&self, tx_hash: &[u8; 32]) -> bool {
+        self.verified.contains(tx_hash)
+    }
+
+    /// Validates with caching: a hit skips proof verification entirely.
+    pub fn validate(
+        &mut self,
+        registry: &ProgramRegistry,
+        tx_hash: [u8; 32],
+        tx: &Compute,
+    ) -> Result<(), Error> {
+        if self.verified.contains(&tx_hash) {
+            return Ok(());
+        }
+        registry.validate(tx)?;
+        self.verified.insert(tx_hash);
+        Ok(())
+    }
+
+    /// Evicts an entry, e.g. when the transaction leaves the pool.
+    pub fn evict(&mut self, tx_hash: &[u8; 32]) {
+        self.verified.remove(tx_hash);
+    }
+}

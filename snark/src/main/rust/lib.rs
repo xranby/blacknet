@@ -19,7 +19,8 @@
 //! the consensus-critical surface; everything else is prover-side.
 
 pub mod commitment;
+pub mod committedfold;
 pub mod fold;
 pub mod proof;
 pub mod recursion;
-pub mod zk;
+pub mod witnesscommitment;

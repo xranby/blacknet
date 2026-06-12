@@ -92,3 +92,26 @@ fn fee_is_execution_independent() {
         params::VERIFY_FEE + 100 * params::BYTE_FEE
     );
 }
+
+#[test]
+fn verification_cache() {
+    use blacknet_kernel::verifiedcomputation::VerificationCache;
+    let mut registry = ProgramRegistry::new();
+    let id = registry.deploy(Deploy { code: square_add() }).unwrap();
+    let (io, proof) = prove(&square_add(), &[f(6)], 100).unwrap();
+    let tx = Compute {
+        program_id: id,
+        io,
+        proof,
+    };
+    let mut cache = VerificationCache::new();
+    let hash = [7u8; 32];
+    assert!(!cache.contains(&hash));
+    assert!(cache.validate(&registry, hash, &tx).is_ok());
+    assert!(cache.contains(&hash));
+    // Hit path: even a tx that would fail verification passes on a cache
+    // hit, which is exactly why entries are inserted only after success.
+    assert!(cache.validate(&registry, hash, &tx).is_ok());
+    cache.evict(&hash);
+    assert!(!cache.contains(&hash));
+}
