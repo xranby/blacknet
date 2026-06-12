@@ -20,11 +20,14 @@ use blacknet_crypto::constraintsystem::ConstraintSystem;
 use blacknet_crypto::matrix::DenseVector;
 use blacknet_crypto::symmetric::{DuplexPoseidon2Pervushin, Duplexer};
 use blacknet_snark::committedfold::{Error, fold, open, strict};
-use blacknet_snark::recursion::{assign, fold_verifier_circuit};
+use blacknet_snark::recursion::fold_verifier_circuit;
 use blacknet_snark::witnesscommitment::{
     CommitmentKey, F, MAX_NORM, decompose, infinity_norm, recompose,
 };
 use blacknet_vm::machine::Instruction;
+
+// Small SIS dimension for test speed; consensus uses SECURE_ROWS.
+const TEST_ROWS: usize = 8;
 
 fn f(n: i32) -> F {
     F::from(n)
@@ -54,7 +57,7 @@ fn decompose_recompose_roundtrip() {
 #[test]
 fn commitment_binds_and_opens() {
     let (_, z) = setup(7);
-    let key = CommitmentKey::setup(z.dimension());
+    let key = CommitmentKey::setup(z.dimension(), TEST_ROWS);
     let d = decompose(&z);
     let c = key.commit(&d);
     assert!(key.open(&c, &d, infinity_norm(&d)));
@@ -70,7 +73,7 @@ fn commitment_binds_and_opens() {
 fn committed_fold_satisfies_and_opens() {
     let (r1cs, z1) = setup(3);
     let (_, z2) = setup(11);
-    let key = CommitmentKey::setup(z1.dimension());
+    let key = CommitmentKey::setup(z1.dimension(), TEST_ROWS);
     let (i1, w1) = strict(&key, &r1cs, &z1);
     let (i2, w2) = strict(&key, &r1cs, &z2);
     assert!(open(&key, &r1cs, &i1, &w1).is_ok());
@@ -90,7 +93,7 @@ fn committed_fold_satisfies_and_opens() {
 fn norm_budget_fails_closed() {
     let (r1cs, z1) = setup(3);
     let (_, z2) = setup(5);
-    let key = CommitmentKey::setup(z1.dimension());
+    let key = CommitmentKey::setup(z1.dimension(), TEST_ROWS);
     let (mut i1, w1) = strict(&key, &r1cs, &z1);
     let (i2, w2) = strict(&key, &r1cs, &z2);
     i1.norm_bound = MAX_NORM; // accumulator at the binding limit
@@ -106,7 +109,7 @@ fn norm_budget_fails_closed() {
 fn forged_fold_rejected_at_opening() {
     let (r1cs, z1) = setup(3);
     let (_, z2) = setup(11);
-    let key = CommitmentKey::setup(z1.dimension());
+    let key = CommitmentKey::setup(z1.dimension(), TEST_ROWS);
     let (i1, w1) = strict(&key, &r1cs, &z1);
     let (i2, w2) = strict(&key, &r1cs, &z2);
     let mut duplex = DuplexPoseidon2Pervushin::default();
@@ -117,43 +120,39 @@ fn forged_fold_rejected_at_opening() {
 }
 
 #[test]
-fn fold_verifier_circuit_checks_the_fold() {
+fn fold_verifier_circuit_derives_challenge_in_circuit() {
     let (r1cs, z1) = setup(3);
     let (_, z2) = setup(11);
-    let key = CommitmentKey::setup(z1.dimension());
+    let key = CommitmentKey::setup(z1.dimension(), TEST_ROWS);
     let (i1, w1) = strict(&key, &r1cs, &z1);
     let (i2, w2) = strict(&key, &r1cs, &z2);
 
-    // Replay the transcript to recover the challenge the fold used.
     let mut duplex = DuplexPoseidon2Pervushin::default();
-    duplex.absorb(f(4));
-    let mut replay = DuplexPoseidon2Pervushin::default();
-    replay.absorb(f(4));
     let (i, _) = fold(&r1cs, (&i1, &w1), (&i2, &w2), &mut duplex).unwrap();
-    for c in [&i1.commitment, &i2.commitment] {
-        for k in 0..c.dimension() {
-            replay.absorb(c[k]);
-        }
-    }
-    replay.absorb(i1.u);
-    replay.absorb(i2.u);
-    let (r, _) = blacknet_snark::witnesscommitment::squeeze_challenge(&mut replay);
 
     let limbs = |v: &DenseVector<F>| (0..v.dimension()).map(|k| v[k]).collect::<Vec<_>>();
-    let circuit = fold_verifier_circuit();
-    let z = assign(
-        r,
-        i1.u,
-        i2.u,
-        i.u,
-        &limbs(&i1.commitment),
-        &limbs(&i2.commitment),
-        &limbs(&i.commitment),
+    let (c1, c2, c) = (
+        limbs(&i1.commitment),
+        limbs(&i2.commitment),
+        limbs(&i.commitment),
     );
-    assert!(circuit.is_satisfied(&DenseVector::from(z.clone())).is_ok());
 
-    // A forged folded u is rejected by the circuit.
-    let mut bad = z;
-    bad[4] += f(1); // u is the 4th public input (after the constant 1)
-    assert!(circuit.is_satisfied(&DenseVector::from(bad)).is_err());
+    let circuit = fold_verifier_circuit(TEST_ROWS);
+    let z = circuit.assigment();
+    z.extend([i1.u, i2.u, i.u]);
+    z.extend(c1.iter().copied());
+    z.extend(c2.iter().copied());
+    z.extend(c.iter().copied());
+    // Mirror the in-circuit transcript and bit decomposition.
+    blacknet_snark::recursion::assigner::fill(&z, i1.u, i2.u, &c1, &c2);
+    assert!(circuit.is_satisfied(&z.finish()).is_ok());
+
+    // A forged folded u cannot be assigned satisfyingly: rebuild with u+1.
+    let bad = circuit.assigment();
+    bad.extend([i1.u, i2.u, i.u + f(1)]);
+    bad.extend(c1.iter().copied());
+    bad.extend(c2.iter().copied());
+    bad.extend(c.iter().copied());
+    blacknet_snark::recursion::assigner::fill(&bad, i1.u, i2.u, &c1, &c2);
+    assert!(circuit.is_satisfied(&bad.finish()).is_err());
 }

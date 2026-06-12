@@ -45,3 +45,7 @@ path = "src/test/rust/fold.rs"
 [[test]]
 name = "committedfold"
 path = "src/test/rust/committedfold.rs"
+
+[[test]]
+name = "hypernova"
+path = "src/test/rust/hypernova.rs"

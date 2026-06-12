@@ -46,17 +46,24 @@ use blacknet_crypto::symmetric::{DuplexPoseidon2Pervushin, Duplexer};
 
 pub type F = PervushinField;
 
-/// SIS rows of the commitment matrix.
-pub const ROWS: usize = 8;
+/// SIS rows of the commitment matrix at the consensus security level:
+/// 128-bit classical per `snark/params.py` with `MAX_NORM = 2^44`. Tests
+/// and benchmarks may instantiate [`CommitmentKey::setup`] with fewer rows;
+/// consensus code must use this constant. The module-SIS instantiation
+/// (`AjtaiCommitment::msis`) will reduce this by the ring degree and is the
+/// planned production path.
+pub const SECURE_ROWS: usize = 2048;
 /// Bits per digit of the gadget decomposition.
 pub const DIGIT_BITS: u32 = 16;
 /// Digits per field element: ceil(61 / 16).
 pub const DIGITS: usize = 4;
 /// Bits of a folding challenge (exceptional set size 2^16).
 pub const CHALLENGE_BITS: u32 = 16;
-/// Maximum infinity norm of an opening for the commitment to stay binding.
-/// Placeholder threshold pending SIS parameter analysis.
-pub const MAX_NORM: u128 = 1 << 48;
+/// Maximum infinity norm of an opening for the commitment to stay binding
+/// at [`SECURE_ROWS`]: 128-bit classical per `snark/params.py`. Norm growth
+/// per multifold is additive (`b + r·2^16 <= b + 2^32`), so this budget
+/// supports about 2^12 sequential folds.
+pub const MAX_NORM: u128 = 1 << 44;
 
 const SETUP_TAG: u32 = 0x424c_4b43; // "BLKC"
 
@@ -67,16 +74,20 @@ pub struct CommitmentKey {
 }
 
 impl CommitmentKey {
+    /// `rows` is the SIS dimension: [`SECURE_ROWS`] for consensus use,
+    /// fewer only in tests and benchmarks. Both `rows` and the columns are
+    /// bound into the transparent setup.
     #[must_use]
-    pub fn setup(elements: usize) -> Self {
+    pub fn setup(elements: usize, rows: usize) -> Self {
         let columns = elements * DIGITS;
         let mut duplex = DuplexPoseidon2Pervushin::default();
         duplex.absorb(F::from(SETUP_TAG));
+        duplex.absorb(F::from(rows as u32));
         duplex.absorb(F::from(columns as u32));
         let a = DenseMatrix::new(
-            ROWS,
+            rows,
             columns,
-            (0..ROWS * columns).map(|_| duplex.generate()).collect(),
+            (0..rows * columns).map(|_| duplex.generate()).collect(),
         );
         Self { a, elements }
     }
