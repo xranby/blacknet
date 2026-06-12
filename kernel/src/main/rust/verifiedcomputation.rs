@@ -31,6 +31,7 @@ use alloc::vec::Vec;
 use blacknet_crypto::algebra::IntegerRing;
 use blacknet_snark::commitment::{ProgramCommitment, commit};
 use blacknet_snark::proof::{Proof, PublicIO, VerifyError, verify};
+use blacknet_snark::witnesscommitment::CommitmentKey;
 use blacknet_vm::machine::Instruction;
 
 pub type F = blacknet_snark::proof::F;
@@ -154,4 +155,74 @@ impl VerificationCache {
     pub fn evict(&mut self, tx_hash: &[u8; 32]) {
         self.verified.remove(tx_hash);
     }
+}
+
+/// A uniform program deployment: code plus its canonical control flow,
+/// from which every validator derives the constraint shape and folds
+/// batched executions (the end-to-end pipeline of `blacknet-snark`).
+pub struct DeployUniform {
+    pub code: Vec<Instruction<F>>,
+    pub sample_inputs: Vec<F>,
+    pub fuel: u64,
+}
+
+/// A batch of executions of one uniform program with an aggregate folding
+/// proof: per-execution verification is logarithmic in the trace, the
+/// single opening is amortized across the batch.
+pub struct ComputeBatch {
+    pub program_id: ProgramCommitment,
+    pub proof: blacknet_snark::pipeline::AggregateProof,
+}
+
+/// Registry of uniform shapes with their commitment keys.
+#[derive(Default)]
+pub struct UniformRegistry {
+    shapes: BTreeMap<[i64; 4], (blacknet_snark::pipeline::Shape, CommitmentKey)>,
+    rows: usize,
+}
+
+impl UniformRegistry {
+    /// `rows` is the SIS dimension of the commitment keys: pass
+    /// `blacknet_snark::witnesscommitment::SECURE_ROWS` in consensus;
+    /// tests may use fewer.
+    #[must_use]
+    pub const fn new(rows: usize) -> Self {
+        Self {
+            shapes: BTreeMap::new(),
+            rows,
+        }
+    }
+
+    pub fn deploy(&mut self, tx: DeployUniform) -> Result<ProgramCommitment, Error> {
+        if tx.code.len() > params::MAX_PROGRAM_LENGTH {
+            return Err(Error::ProgramTooLong(tx.code.len()));
+        }
+        let shape = blacknet_snark::pipeline::Shape::derive(tx.code, &tx.sample_inputs, tx.fuel)
+            .map_err(|_| Error::UnknownProgram)?;
+        let id = shape.program_id;
+        if self.shapes.contains_key(&key(&id)) {
+            return Err(Error::AlreadyDeployed);
+        }
+        let ckey = CommitmentKey::setup(shape.elements, self.rows);
+        self.shapes.insert(key(&id), (shape, ckey));
+        Ok(id)
+    }
+
+    /// Validates a batch: replays the folding transcript and performs the
+    /// amortized opening. Never executes the program.
+    pub fn validate(&self, tx: &ComputeBatch) -> Result<(), Error> {
+        let (shape, ckey) = self
+            .shapes
+            .get(&key(&tx.program_id))
+            .ok_or(Error::UnknownProgram)?;
+        blacknet_snark::pipeline::verify_aggregate(shape, ckey, &tx.proof)
+            .map_err(|_| Error::Verify(VerifyError::Unsatisfied))
+    }
+}
+
+/// Batch fee: flat per-execution verification charge plus the amortized
+/// opening priced by proof bytes. Still independent of computation length.
+#[must_use]
+pub const fn compute_batch_fee(executions: usize, proof_bytes: usize) -> u64 {
+    params::VERIFY_FEE * executions as u64 + params::BYTE_FEE * proof_bytes as u64
 }

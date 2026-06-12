@@ -52,12 +52,18 @@ type E = UniformDistribution<D>;
 type SC = SumCheck<F, F, FoldPolynomial, D, E>;
 
 /// The public accumulator: a commitment to the digit witness, the
-/// linearized claim, and the norm bound of the opening.
+/// linearized claim, the folded public IO, and the norm bound.
+///
+/// `x` folds with the same challenges as the witness; since the witness
+/// folds linearly, the opened folded witness positions must equal the
+/// folded `x`, which binds every individual instance's IO (the standard
+/// Nova public-IO argument).
 #[derive(Clone, Debug)]
 pub struct Accumulator {
     pub commitment: DenseVector<F>,
     pub point: Vec<F>,
     pub evals: [F; 3],
+    pub x: Vec<F>,
     pub norm_bound: u128,
 }
 
@@ -216,6 +222,7 @@ fn absorb_accumulator<DU: Duplexer<Msg = F>>(duplex: &mut DU, acc: &Accumulator)
     }
     duplex.absorb_iter(acc.point.iter().copied());
     duplex.absorb_iter(acc.evals.iter().copied());
+    duplex.absorb_iter(acc.x.iter().copied());
 }
 
 /// Bootstraps an accumulator from a strict satisfying witness `z` by
@@ -225,8 +232,10 @@ pub fn init(
     key: &CommitmentKey,
     r1cs: &ShapedR1cs,
     z: &DenseVector<F>,
+    io_positions: &[usize],
     context: &[F],
 ) -> (Accumulator, AccumulatorWitness, MultifoldProof) {
+    let x: Vec<F> = io_positions.iter().map(|&i| z[i]).collect();
     let len = padded_rows(r1cs);
     let mu = len.trailing_zeros() as usize;
     let d = decompose(z);
@@ -240,6 +249,7 @@ pub fn init(
         for k in 0..commitment.dimension() {
             t.absorb(commitment[k]);
         }
+        t.absorb_iter(x.iter().copied());
     }
     let beta = squeeze_point(&mut duplex, mu);
     let _ = squeeze_point(&mut mirror, mu);
@@ -275,6 +285,7 @@ pub fn init(
             commitment,
             point,
             evals: theta,
+            x,
             norm_bound,
         },
         AccumulatorWitness { d },
@@ -290,6 +301,7 @@ pub fn init(
 pub fn init_verify(
     r1cs: &ShapedR1cs,
     commitment: &DenseVector<F>,
+    x: &[F],
     norm_bound: u128,
     proof: &MultifoldProof,
     context: &[F],
@@ -304,6 +316,7 @@ pub fn init_verify(
     for k in 0..commitment.dimension() {
         duplex.absorb(commitment[k]);
     }
+    duplex.absorb_iter(x.iter().copied());
     let beta = squeeze_point(&mut duplex, mu);
     let shape = shape_polynomial(len);
     let mut exceptional = E::default();
@@ -326,6 +339,7 @@ pub fn init_verify(
         commitment: commitment.clone(),
         point,
         evals: theta,
+        x: x.to_vec(),
         norm_bound,
     })
 }
@@ -336,11 +350,16 @@ pub fn multifold(
     r1cs: &ShapedR1cs,
     running: (&Accumulator, &AccumulatorWitness),
     fresh_z: &DenseVector<F>,
+    io_positions: &[usize],
     context: &[F],
 ) -> Result<(Accumulator, AccumulatorWitness, MultifoldProof), Error> {
     let (acc, w) = running;
     let len = padded_rows(r1cs);
     let mu = len.trailing_zeros() as usize;
+    if acc.x.len() != io_positions.len() {
+        return Err(Error::Shape);
+    }
+    let fresh_x: Vec<F> = io_positions.iter().map(|&i| fresh_z[i]).collect();
 
     let fresh_d = decompose(fresh_z);
     let fresh_commitment = key.commit(&fresh_d);
@@ -354,6 +373,7 @@ pub fn multifold(
         for k in 0..fresh_commitment.dimension() {
             t.absorb(fresh_commitment[k]);
         }
+        t.absorb_iter(fresh_x.iter().copied());
     }
     let gamma: F = duplex.squeeze();
     let _g: F = mirror.squeeze();
@@ -411,11 +431,18 @@ pub fn multifold(
         .map(|k| w.d[k] + r * fresh_d[k])
         .collect();
 
+    let x: Vec<F> = acc
+        .x
+        .iter()
+        .zip(&fresh_x)
+        .map(|(a, b)| *a + r * *b)
+        .collect();
     Ok((
         Accumulator {
             commitment,
             point,
             evals,
+            x,
             norm_bound,
         },
         AccumulatorWitness { d },
@@ -432,12 +459,16 @@ pub fn multifold_verify(
     r1cs: &ShapedR1cs,
     acc: &Accumulator,
     fresh_commitment: &DenseVector<F>,
+    fresh_x: &[F],
     fresh_norm: u128,
     proof: &MultifoldProof,
     context: &[F],
 ) -> Result<Accumulator, Error> {
     let len = padded_rows(r1cs);
     let mu = len.trailing_zeros() as usize;
+    if acc.x.len() != fresh_x.len() {
+        return Err(Error::Shape);
+    }
 
     let mut duplex = D::default();
     duplex.absorb_iter(context.iter().copied());
@@ -445,6 +476,7 @@ pub fn multifold_verify(
     for k in 0..fresh_commitment.dimension() {
         duplex.absorb(fresh_commitment[k]);
     }
+    duplex.absorb_iter(fresh_x.iter().copied());
     let gamma: F = duplex.squeeze();
     let beta = squeeze_point(&mut duplex, mu);
     let gammas = [
@@ -486,6 +518,12 @@ pub fn multifold_verify(
         commitment,
         point,
         evals: core::array::from_fn(|j| sigma[j] + r * theta[j]),
+        x: acc
+            .x
+            .iter()
+            .zip(fresh_x)
+            .map(|(a, b)| *a + r * *b)
+            .collect(),
         norm_bound,
     })
 }
@@ -496,6 +534,7 @@ pub fn multifold_verify(
 pub fn open(
     key: &CommitmentKey,
     r1cs: &ShapedR1cs,
+    io_positions: &[usize],
     acc: &Accumulator,
     witness: &AccumulatorWitness,
 ) -> Result<(), Error> {
@@ -503,6 +542,14 @@ pub fn open(
         return Err(Error::Opening);
     }
     let z = recompose(&witness.d);
+    if acc.x.len() != io_positions.len() {
+        return Err(Error::Shape);
+    }
+    for (&i, expected) in io_positions.iter().zip(&acc.x) {
+        if z[i] != *expected {
+            return Err(Error::Unsatisfied);
+        }
+    }
     let len = padded_rows(r1cs);
     let m = images(r1cs, &z, len);
     for (mj, ev) in m.iter().zip(acc.evals.iter()) {

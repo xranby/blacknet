@@ -21,6 +21,8 @@ use blacknet_kernel::verifiedcomputation::{
 use blacknet_snark::proof::prove;
 use blacknet_vm::machine::Instruction;
 
+macro_rules! alloc_vec { ($($x:expr),*) => { vec![$($x),*] } }
+
 fn f(n: i32) -> F {
     F::from(n)
 }
@@ -114,4 +116,43 @@ fn verification_cache() {
     assert!(cache.validate(&registry, hash, &tx).is_ok());
     cache.evict(&hash);
     assert!(!cache.contains(&hash));
+}
+
+#[test]
+fn uniform_batch_end_to_end() {
+    use blacknet_kernel::verifiedcomputation::{
+        ComputeBatch, DeployUniform, UniformRegistry, compute_batch_fee,
+    };
+    use blacknet_snark::pipeline::{Shape, prove_aggregate, prove_execution};
+    use blacknet_snark::witnesscommitment::CommitmentKey;
+
+    const TEST_ROWS: usize = 8;
+    let mut registry = UniformRegistry::new(TEST_ROWS);
+    let id = registry
+        .deploy(DeployUniform {
+            code: square_add(),
+            sample_inputs: alloc_vec![f(1)],
+            fuel: 100,
+        })
+        .unwrap();
+
+    // Prover side mirrors the deployment-derived shape and key.
+    let shape = Shape::derive(square_add(), &[f(1)], 100).unwrap();
+    let key = CommitmentKey::setup(shape.elements, TEST_ROWS);
+    let executions: Vec<_> = [3i32, 7, 12]
+        .iter()
+        .map(|&x| prove_execution(&shape, &key, &[f(x)]).unwrap())
+        .collect();
+    let proof = prove_aggregate(&shape, &key, &executions).unwrap();
+
+    let tx = ComputeBatch {
+        program_id: id,
+        proof,
+    };
+    assert!(registry.validate(&tx).is_ok());
+    assert_eq!(
+        compute_batch_fee(3, 1000),
+        3 * blacknet_kernel::verifiedcomputation::params::VERIFY_FEE
+            + 1000 * blacknet_kernel::verifiedcomputation::params::BYTE_FEE
+    );
 }

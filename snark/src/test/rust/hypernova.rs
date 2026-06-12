@@ -47,41 +47,51 @@ fn run(
 }
 
 const CTX: [F; 0] = [];
+const IO: [usize; 0] = [];
 
 #[test]
 fn init_roundtrip() {
     let (r1cs, z) = run(3);
     let key = CommitmentKey::setup(z.dimension(), TEST_ROWS);
-    let (acc, w, proof) = init(&key, &r1cs, &z, &CTX);
+    let (acc, w, proof) = init(&key, &r1cs, &z, &IO, &CTX);
     let norm = infinity_norm(&decompose(&z));
-    let verified = init_verify(&r1cs, &acc.commitment, norm, &proof, &CTX).unwrap();
+    let verified = init_verify(&r1cs, &acc.commitment, &[], norm, &proof, &CTX).unwrap();
     assert_eq!(verified.point, acc.point);
     assert_eq!(verified.evals, acc.evals);
-    assert!(open(&key, &r1cs, &acc, &w).is_ok());
-    assert!(open(&key, &r1cs, &verified, &w).is_ok());
+    assert!(open(&key, &r1cs, &IO, &acc, &w).is_ok());
+    assert!(open(&key, &r1cs, &IO, &verified, &w).is_ok());
 }
 
 #[test]
 fn multifold_chain_no_error_vector() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (mut acc, mut w, proof) = init(&key, &r1cs, &z0, &CTX);
+    let (mut acc, mut w, proof) = init(&key, &r1cs, &z0, &IO, &CTX);
     let norm0 = infinity_norm(&decompose(&z0));
-    let mut vacc = init_verify(&r1cs, &acc.commitment, norm0, &proof, &CTX).unwrap();
+    let mut vacc = init_verify(&r1cs, &acc.commitment, &[], norm0, &proof, &CTX).unwrap();
 
     for n in [5, 7, 11, 13] {
         let (_, z) = run(n);
         let fresh_norm = infinity_norm(&decompose(&z));
         let fresh_commitment = key.commit(&decompose(&z));
-        let (nacc, nw, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+        let (nacc, nw, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
         // Independent verifier from public data only.
-        vacc = multifold_verify(&r1cs, &vacc, &fresh_commitment, fresh_norm, &proof, &CTX).unwrap();
+        vacc = multifold_verify(
+            &r1cs,
+            &vacc,
+            &fresh_commitment,
+            &[],
+            fresh_norm,
+            &proof,
+            &CTX,
+        )
+        .unwrap();
         assert_eq!(vacc.point, nacc.point);
         assert_eq!(vacc.evals, nacc.evals);
         assert_eq!(vacc.norm_bound, nacc.norm_bound);
         acc = nacc;
         w = nw;
-        assert!(open(&key, &r1cs, &acc, &w).is_ok());
+        assert!(open(&key, &r1cs, &IO, &acc, &w).is_ok());
     }
 }
 
@@ -89,17 +99,26 @@ fn multifold_chain_no_error_vector() {
 fn forged_sigma_rejected() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, iproof) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, iproof) = init(&key, &r1cs, &z0, &IO, &CTX);
     let norm0 = infinity_norm(&decompose(&z0));
-    let vacc = init_verify(&r1cs, &acc.commitment, norm0, &iproof, &CTX).unwrap();
+    let vacc = init_verify(&r1cs, &acc.commitment, &[], norm0, &iproof, &CTX).unwrap();
 
     let (_, z) = run(5);
     let fresh_norm = infinity_norm(&decompose(&z));
     let fresh_commitment = key.commit(&decompose(&z));
-    let (_, _, mut proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+    let (_, _, mut proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
     proof.sigma[0] += f(1);
     assert_eq!(
-        multifold_verify(&r1cs, &vacc, &fresh_commitment, fresh_norm, &proof, &CTX).unwrap_err(),
+        multifold_verify(
+            &r1cs,
+            &vacc,
+            &fresh_commitment,
+            &[],
+            fresh_norm,
+            &proof,
+            &CTX
+        )
+        .unwrap_err(),
         Error::ClaimMismatch
     );
 }
@@ -108,9 +127,9 @@ fn forged_sigma_rejected() {
 fn unsatisfying_fresh_witness_rejected() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, iproof) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, iproof) = init(&key, &r1cs, &z0, &IO, &CTX);
     let norm0 = infinity_norm(&decompose(&z0));
-    let vacc = init_verify(&r1cs, &acc.commitment, norm0, &iproof, &CTX).unwrap();
+    let vacc = init_verify(&r1cs, &acc.commitment, &[], norm0, &iproof, &CTX).unwrap();
 
     let (_, z) = run(5);
     let mut bad: Vec<F> = (0..z.dimension()).map(|i| z[i]).collect();
@@ -124,9 +143,18 @@ fn unsatisfying_fresh_witness_rejected() {
     // the discrepancy with overwhelming probability.
     let fresh_norm = infinity_norm(&decompose(&bad));
     let fresh_commitment = key.commit(&decompose(&bad));
-    let (_, _, proof) = multifold(&key, &r1cs, (&acc, &w), &bad, &CTX).unwrap();
+    let (_, _, proof) = multifold(&key, &r1cs, (&acc, &w), &bad, &IO, &CTX).unwrap();
     assert_eq!(
-        multifold_verify(&r1cs, &vacc, &fresh_commitment, fresh_norm, &proof, &CTX).unwrap_err(),
+        multifold_verify(
+            &r1cs,
+            &vacc,
+            &fresh_commitment,
+            &[],
+            fresh_norm,
+            &proof,
+            &CTX
+        )
+        .unwrap_err(),
         Error::ClaimMismatch
     );
 }
@@ -135,17 +163,26 @@ fn unsatisfying_fresh_witness_rejected() {
 fn norm_budget_enforced_by_verifier() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, iproof) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, iproof) = init(&key, &r1cs, &z0, &IO, &CTX);
     let norm0 = infinity_norm(&decompose(&z0));
-    let mut vacc = init_verify(&r1cs, &acc.commitment, norm0, &iproof, &CTX).unwrap();
+    let mut vacc = init_verify(&r1cs, &acc.commitment, &[], norm0, &iproof, &CTX).unwrap();
     vacc.norm_bound = MAX_NORM; // accumulator at the binding limit
 
     let (_, z) = run(5);
     let fresh_norm = infinity_norm(&decompose(&z));
     let fresh_commitment = key.commit(&decompose(&z));
-    let (_, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+    let (_, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
     assert_eq!(
-        multifold_verify(&r1cs, &vacc, &fresh_commitment, fresh_norm, &proof, &CTX).unwrap_err(),
+        multifold_verify(
+            &r1cs,
+            &vacc,
+            &fresh_commitment,
+            &[],
+            fresh_norm,
+            &proof,
+            &CTX
+        )
+        .unwrap_err(),
         Error::NormBudget
     );
 }

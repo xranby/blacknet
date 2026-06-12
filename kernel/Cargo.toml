@@ -34,6 +34,7 @@ categories.workspace = true
 blacknet-crypto.workspace = true
 blacknet-vm.workspace = true
 blacknet-serialization.workspace = true
+blacknet-arith.workspace = true
 blacknet-snark.workspace = true
 blacknet-time.workspace = true
 blake2.workspace = true

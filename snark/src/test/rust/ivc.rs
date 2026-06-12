@@ -48,21 +48,31 @@ fn run(
 }
 
 const CTX: [F; 0] = [];
+const IO: [usize; 1] = [1];
 
 #[test]
 fn ivc_step_circuit_verifies_a_real_multifold() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, _) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, _) = init(&key, &r1cs, &z0, &IO, &CTX);
 
     let (_, z) = run(11);
     let fresh_commitment = key.commit(&decompose(&z));
-    let (next, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+    let (next, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
 
     let mu = padded_rows_of(&r1cs).trailing_zeros() as usize;
-    let circuit = multifold_verifier_circuit(TEST_ROWS, mu);
+    let circuit = multifold_verifier_circuit(TEST_ROWS, mu, IO.len());
     let z_assigned = circuit.assigment();
-    assigner::fill(&z_assigned, &acc, &fresh_commitment, &next, &proof, mu);
+    let fresh_x = [z[1]];
+    assigner::fill(
+        &z_assigned,
+        &acc,
+        &fresh_commitment,
+        &fresh_x,
+        &next,
+        &proof,
+        mu,
+    );
     assert!(circuit.is_satisfied(&z_assigned.finish()).is_ok());
 }
 
@@ -70,17 +80,26 @@ fn ivc_step_circuit_verifies_a_real_multifold() {
 fn ivc_step_circuit_rejects_forged_fold() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, _) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, _) = init(&key, &r1cs, &z0, &IO, &CTX);
 
     let (_, z) = run(11);
     let fresh_commitment = key.commit(&decompose(&z));
-    let (mut next, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+    let (mut next, _, proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
     next.evals[0] += f(1); // forge the folded claim
 
     let mu = padded_rows_of(&r1cs).trailing_zeros() as usize;
-    let circuit = multifold_verifier_circuit(TEST_ROWS, mu);
+    let circuit = multifold_verifier_circuit(TEST_ROWS, mu, IO.len());
     let z_assigned = circuit.assigment();
-    assigner::fill(&z_assigned, &acc, &fresh_commitment, &next, &proof, mu);
+    let fresh_x = [z[1]];
+    assigner::fill(
+        &z_assigned,
+        &acc,
+        &fresh_commitment,
+        &fresh_x,
+        &next,
+        &proof,
+        mu,
+    );
     assert!(circuit.is_satisfied(&z_assigned.finish()).is_err());
 }
 
@@ -88,16 +107,25 @@ fn ivc_step_circuit_rejects_forged_fold() {
 fn ivc_step_circuit_rejects_forged_sumcheck() {
     let (r1cs, z0) = run(3);
     let key = CommitmentKey::setup(z0.dimension(), TEST_ROWS);
-    let (acc, w, _) = init(&key, &r1cs, &z0, &CTX);
+    let (acc, w, _) = init(&key, &r1cs, &z0, &IO, &CTX);
 
     let (_, z) = run(11);
     let fresh_commitment = key.commit(&decompose(&z));
-    let (next, _, mut proof) = multifold(&key, &r1cs, (&acc, &w), &z, &CTX).unwrap();
+    let (next, _, mut proof) = multifold(&key, &r1cs, (&acc, &w), &z, &IO, &CTX).unwrap();
     proof.sigma[1] += f(1); // forge the prover-supplied evaluation
 
     let mu = padded_rows_of(&r1cs).trailing_zeros() as usize;
-    let circuit = multifold_verifier_circuit(TEST_ROWS, mu);
+    let circuit = multifold_verifier_circuit(TEST_ROWS, mu, IO.len());
     let z_assigned = circuit.assigment();
-    assigner::fill(&z_assigned, &acc, &fresh_commitment, &next, &proof, mu);
+    let fresh_x = [z[1]];
+    assigner::fill(
+        &z_assigned,
+        &acc,
+        &fresh_commitment,
+        &fresh_x,
+        &next,
+        &proof,
+        mu,
+    );
     assert!(circuit.is_satisfied(&z_assigned.finish()).is_err());
 }

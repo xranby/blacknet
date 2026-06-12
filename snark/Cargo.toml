@@ -57,3 +57,7 @@ path = "src/test/rust/ivc.rs"
 [[test]]
 name = "modulecommitment"
 path = "src/test/rust/modulecommitment.rs"
+
+[[test]]
+name = "pipeline"
+path = "src/test/rust/pipeline.rs"

@@ -52,7 +52,11 @@ const EVALS: usize = 3;
 /// Builds the CCS of one multifold verification over a constraint system
 /// with `rows` commitment limbs and `2^mu` padded constraint rows.
 #[must_use]
-pub fn multifold_verifier_circuit(rows: usize, mu: usize) -> CustomizableConstraintSystem<F> {
+pub fn multifold_verifier_circuit(
+    rows: usize,
+    mu: usize,
+    xlen: usize,
+) -> CustomizableConstraintSystem<F> {
     let circuit = CircuitBuilder::<F>::new(2);
     {
         let scope = circuit.scope("multifold_verifier");
@@ -62,12 +66,15 @@ pub fn multifold_verifier_circuit(rows: usize, mu: usize) -> CustomizableConstra
         let acc_c: Vec<_> = (0..rows).map(lc).collect();
         let acc_point: Vec<_> = (0..mu).map(lc).collect();
         let acc_evals: Vec<_> = (0..EVALS).map(lc).collect();
+        let acc_x: Vec<_> = (0..xlen).map(lc).collect();
         let fresh_c: Vec<_> = (0..rows).map(lc).collect();
+        let fresh_x: Vec<_> = (0..xlen).map(lc).collect();
         let proof =
             ProofCircuit::allocate(&circuit, VariableKind::PublicInput, mu, SUMCHECK_DEGREE);
         let sigma: Vec<_> = (0..EVALS).map(lc).collect();
         let theta: Vec<_> = (0..EVALS).map(lc).collect();
         let new_evals: Vec<_> = (0..EVALS).map(lc).collect();
+        let new_x: Vec<_> = (0..xlen).map(lc).collect();
         let new_c: Vec<_> = (0..rows).map(lc).collect();
 
         // Transcript, matching hypernova::multifold_verify (empty context).
@@ -75,7 +82,9 @@ pub fn multifold_verifier_circuit(rows: usize, mu: usize) -> CustomizableConstra
         duplex.absorb_iter(acc_c.iter().cloned());
         duplex.absorb_iter(acc_point.iter().cloned());
         duplex.absorb_iter(acc_evals.iter().cloned());
+        duplex.absorb_iter(acc_x.iter().cloned());
         duplex.absorb_iter(fresh_c.iter().cloned());
+        duplex.absorb_iter(fresh_x.iter().cloned());
         let gamma: LinearCombination<F> = duplex.squeeze();
         let beta: Vec<LinearCombination<F>> = (0..mu).map(|_| duplex.squeeze()).collect();
 
@@ -128,6 +137,9 @@ pub fn multifold_verifier_circuit(rows: usize, mu: usize) -> CustomizableConstra
         for k in 0..rows {
             scope.constrain(&r * &fresh_c[k], &new_c[k] - &acc_c[k]);
         }
+        for i in 0..xlen {
+            scope.constrain(&r * &fresh_x[i], &new_x[i] - &acc_x[i]);
+        }
     }
     circuit.ccs()
 }
@@ -162,6 +174,7 @@ pub mod assigner {
         z: &Assigment<F>,
         acc: &Accumulator,
         fresh_commitment: &DenseVector<F>,
+        fresh_x: &[F],
         next: &Accumulator,
         proof: &MultifoldProof,
         mu: usize,
@@ -175,13 +188,16 @@ pub mod assigner {
         z.extend(acc_c.iter().copied());
         z.extend(acc.point.iter().copied());
         z.extend(acc.evals.iter().copied());
+        z.extend(acc.x.iter().copied());
         z.extend(fresh_c.iter().copied());
+        z.extend(fresh_x.iter().copied());
         for claim in &proof.sumcheck {
             z.extend(claim.as_ref().iter().copied());
         }
         z.extend(proof.sigma.iter().copied());
         z.extend(proof.theta.iter().copied());
         z.extend(next.evals.iter().copied());
+        z.extend(next.x.iter().copied());
         z.extend(new_c.iter().copied());
 
         // Transcript mirror.
@@ -189,7 +205,9 @@ pub mod assigner {
         duplex.absorb_iter(acc_c.iter().copied());
         duplex.absorb_iter(acc.point.iter().copied());
         duplex.absorb_iter(acc.evals.iter().copied());
+        duplex.absorb_iter(acc.x.iter().copied());
         duplex.absorb_iter(fresh_c.iter().copied());
+        duplex.absorb_iter(fresh_x.iter().copied());
         let gamma: F = duplex.squeeze();
         let beta: Vec<F> = (0..mu).map(|_| duplex.squeeze()).collect();
 
