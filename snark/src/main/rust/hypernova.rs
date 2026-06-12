@@ -196,8 +196,17 @@ pub(crate) const fn padded_rows(r1cs: &ShapedR1cs) -> usize {
 }
 
 fn images(r1cs: &ShapedR1cs, z: &DenseVector<F>, len: usize) -> [Vec<F>; 3] {
-    let (a, b, c) = r1cs.images(z);
+    // Commitments may carry hiding salt beyond the constrained witness;
+    // the constraint relation sees only the leading columns.
+    let z = constrained(r1cs, z);
+    let (a, b, c) = r1cs.images(&z);
     [pad(a, len), pad(b, len), pad(c, len)]
+}
+
+/// Truncates a (possibly salted) witness to the constraint columns.
+fn constrained(r1cs: &ShapedR1cs, z: &DenseVector<F>) -> DenseVector<F> {
+    let columns = r1cs.a().columns();
+    (0..columns.min(z.dimension())).map(|i| z[i]).collect()
 }
 
 fn mle_eval(table: &[F], point: &[F]) -> F {

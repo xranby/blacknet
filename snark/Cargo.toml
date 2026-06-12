@@ -61,3 +61,7 @@ path = "src/test/rust/modulecommitment.rs"
 [[test]]
 name = "pipeline"
 path = "src/test/rust/pipeline.rs"
+
+[[test]]
+name = "zk"
+path = "src/test/rust/zk.rs"

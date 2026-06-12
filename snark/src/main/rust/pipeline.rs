@@ -44,6 +44,7 @@ use crate::hypernova::{
     padded_rows_of,
 };
 use crate::witnesscommitment::{CommitmentKey, F, decompose, infinity_norm};
+use crate::zk::{BlindProof, blind, blind_verify};
 use blacknet_arith::r1cs::ShapedR1cs;
 use blacknet_arith::trace::{self, REGISTERS, constrain};
 use blacknet_crypto::matrix::DenseVector;
@@ -112,6 +113,14 @@ impl Shape {
     }
 }
 
+/// Hiding salt appended to each witness before decomposition (see
+/// `crate::zk`): the constraint matrices never read these columns, so
+/// soundness is unaffected, while the commitment gains `4·SALT_ELEMENTS`
+/// uniform low-norm digits of entropy. Statistical hiding at the consensus
+/// row count wants far more (the Module-LWE commitment is the compact
+/// path); this default is the computational-hiding baseline.
+pub const SALT_ELEMENTS: usize = 16;
+
 /// One execution prepared for folding: public IO, commitment, norm, and
 /// (prover-side) the witness.
 pub struct Execution {
@@ -128,6 +137,19 @@ pub fn prove_execution(
     key: &CommitmentKey,
     inputs: &[F],
 ) -> Result<Execution, Error> {
+    prove_execution_salted(shape, key, inputs, 0)
+}
+
+/// As [`prove_execution`], appending `salt` uniformly random field
+/// elements to the witness before committing, hiding the commitment (see
+/// `crate::zk`). The commitment key must be sized for
+/// `shape.elements + salt`.
+pub fn prove_execution_salted(
+    shape: &Shape,
+    key: &CommitmentKey,
+    inputs: &[F],
+    salt: usize,
+) -> Result<Execution, Error> {
     if inputs.len() != shape.inputs {
         return Err(Error::IoShape);
     }
@@ -140,12 +162,28 @@ pub fn prove_execution(
         .iter()
         .map(|&i| execution.witness[i])
         .collect();
-    let d = decompose(&execution.witness);
+    let witness: DenseVector<F> = (0..execution.witness.dimension())
+        .map(|i| execution.witness[i])
+        .chain(sample_salt(salt))
+        .collect();
+    let d = decompose(&witness);
     Ok(Execution {
         io,
         commitment: key.commit(&d),
         norm: infinity_norm(&d),
-        witness: execution.witness,
+        witness,
+    })
+}
+
+fn sample_salt(n: usize) -> impl Iterator<Item = F> {
+    use blacknet_crypto::algebra::IntegerRing;
+    use blacknet_crypto::random::{FAST_RNG, UniformGenerator};
+    (0..n).map(|_| {
+        FAST_RNG.with(|rng| {
+            let mut bytes = [0u8; 8];
+            rng.borrow_mut().fill(&mut bytes);
+            <F as IntegerRing>::new((u64::from_le_bytes(bytes) >> 3) as i64)
+        })
     })
 }
 
@@ -157,6 +195,9 @@ pub struct AggregateProof {
     pub norms: Vec<u128>,
     pub init: MultifoldProof,
     pub folds: Vec<MultifoldProof>,
+    /// Present when the opening is zero-knowledge: the blinding fold that
+    /// detaches the opened witness from the folded executions.
+    pub blind: Option<BlindProof>,
     pub opening: DenseVector<F>,
     pub accumulator: Accumulator,
 }
@@ -192,9 +233,38 @@ pub fn prove_aggregate(
         norms: executions.iter().map(|e| e.norm).collect(),
         init: init_proof,
         folds,
+        blind: None,
         opening: w.d,
         accumulator: acc,
     })
+}
+
+/// Proves a batch with a zero-knowledge opening: the aggregate is blinded
+/// by a rejection-sampled fold before opening, so the revealed witness is
+/// statistically independent of the executions. Combine with
+/// [`prove_execution_salted`] for hiding per-instance commitments.
+pub fn prove_aggregate_zk(
+    shape: &Shape,
+    key: &CommitmentKey,
+    executions: &[Execution],
+) -> Result<AggregateProof, Error> {
+    let mut proof = prove_aggregate(shape, key, executions)?;
+    let w = crate::hypernova::AccumulatorWitness {
+        d: proof.opening.clone(),
+    };
+    let (blind_proof, acc, w) = blind(
+        key,
+        &shape.r1cs,
+        &shape.io_positions,
+        &proof.accumulator,
+        &w,
+        &shape.program,
+    )
+    .map_err(|_| Error::Arith)?;
+    proof.blind = Some(blind_proof);
+    proof.opening = w.d;
+    proof.accumulator = acc;
+    Ok(proof)
 }
 
 /// Verifies an aggregate: replays the folding transcript from public data
@@ -235,6 +305,10 @@ pub fn verify_aggregate(
             fold,
             &[],
         )?;
+    }
+    // A zero-knowledge opening adds one blinding fold before comparison.
+    if let Some(blind_proof) = &proof.blind {
+        acc = blind_verify(&acc, blind_proof).map_err(|_| Error::IoShape)?;
     }
     // The prover-supplied final accumulator must match the replay exactly.
     if acc.point != proof.accumulator.point

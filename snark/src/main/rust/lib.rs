@@ -28,3 +28,4 @@ pub mod pipeline;
 pub mod proof;
 pub mod recursion;
 pub mod witnesscommitment;
+pub mod zk;
