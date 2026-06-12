@@ -49,3 +49,11 @@ path = "src/test/rust/committedfold.rs"
 [[test]]
 name = "hypernova"
 path = "src/test/rust/hypernova.rs"
+
+[[test]]
+name = "ivc"
+path = "src/test/rust/ivc.rs"
+
+[[test]]
+name = "modulecommitment"
+path = "src/test/rust/modulecommitment.rs"

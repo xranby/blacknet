@@ -105,6 +105,31 @@ pub fn fold_verifier_circuit(rows: usize) -> CustomizableConstraintSystem<F> {
     circuit.ccs()
 }
 
+/// Constrains `e` to its canonical bit decomposition and returns the low
+/// [`CHALLENGE_BITS`] bits recomposed: the in-circuit counterpart of
+/// `witnesscommitment::squeeze_challenge` truncation.
+#[must_use]
+pub fn truncate_challenge<'a, 'b>(
+    circuit: &'a CircuitBuilder<'b, F>,
+    e: LinearCombination<F>,
+) -> LinearCombination<F> {
+    let scope = circuit.scope("truncate_challenge");
+    let gate = LogicGate::new(circuit);
+    let bits: Vec<LinearCombination<F>> =
+        (0..FIELD_BITS).map(|_| scope.auxiliary().into()).collect();
+    gate.check_range_slice(&bits);
+    let pow = |i: usize| Constant::new(<F as IntegerRing>::new(1i64 << i));
+    let recomposed = bits
+        .iter()
+        .enumerate()
+        .fold(LinearCombination::default(), |acc, (i, b)| acc + b * pow(i));
+    scope.constrain(recomposed, e);
+    bits[..CHALLENGE_BITS as usize]
+        .iter()
+        .enumerate()
+        .fold(LinearCombination::default(), |acc, (i, b)| acc + b * pow(i))
+}
+
 /// Auxiliary assignment of one fold: mirrors the circuit's allocation
 /// order. `e` is the element the plain transcript squeezed.
 pub mod assigner {
@@ -127,10 +152,17 @@ pub mod assigner {
         duplex.absorb(u1);
         duplex.absorb(u2);
         let e: F = duplex.squeeze();
+        push_bits(z, e);
+        e
+    }
+
+    /// Pushes the canonical bit decomposition of `e`, mirroring
+    /// [`super::truncate_challenge`], and returns the truncated challenge.
+    pub fn push_bits(z: &Assigment<F>, e: F) -> F {
         let canonical = e.canonical();
         for i in 0..FIELD_BITS {
             z.push(F::from(u32::from((canonical >> i) & 1 == 1)));
         }
-        e
+        F::from((canonical as u64 & ((1 << super::CHALLENGE_BITS) - 1)) as u32)
     }
 }

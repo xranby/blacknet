@@ -179,7 +179,13 @@ fn pad(v: DenseVector<F>, len: usize) -> Vec<F> {
     t
 }
 
-const fn padded_rows(r1cs: &ShapedR1cs) -> usize {
+/// The power-of-two padded constraint count, public for circuit sizing.
+#[must_use]
+pub const fn padded_rows_of(r1cs: &ShapedR1cs) -> usize {
+    padded_rows(r1cs)
+}
+
+pub(crate) const fn padded_rows(r1cs: &ShapedR1cs) -> usize {
     r1cs.a().rows().next_power_of_two()
 }
 
@@ -519,7 +525,7 @@ fn clone_polynomial(p: &FoldPolynomial) -> FoldPolynomial {
 
 /// A shape-only polynomial for the verifier's early-stopping path, which
 /// consults only `variables()` and `degree()`.
-fn shape_polynomial(len: usize) -> FoldPolynomial {
+pub(crate) fn shape_polynomial(len: usize) -> FoldPolynomial {
     FoldPolynomial {
         eq_rho: vec![F::from(0); len],
         m1: [
