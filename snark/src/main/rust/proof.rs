@@ -137,3 +137,37 @@ pub fn verify(
     }
     Ok(())
 }
+
+impl Proof {
+    /// Canonical wire encoding (version-prefixed, deterministic).
+    #[must_use]
+    pub fn encode(&self) -> Vec<u8> {
+        use crate::wire::{WIRE_VERSION, Writer};
+        let mut w = Writer::new();
+        w.version(WIRE_VERSION);
+        w.version(self.version);
+        w.u32_slice(&self.pc_trace);
+        w.field_slice(&self.witness);
+        w.finish()
+    }
+
+    /// Decodes a proof, rejecting malformed, non-canonical, or trailing
+    /// input.
+    pub fn decode(bytes: &[u8]) -> Result<Self, crate::wire::Error> {
+        use crate::wire::Reader;
+        let mut r = Reader::new(bytes);
+        r.version(crate::wire::WIRE_VERSION)?;
+        let inner = r.byte()?;
+        if inner != VERSION {
+            return Err(crate::wire::Error::BadVersion(inner));
+        }
+        let pc_trace = r.u32_slice()?;
+        let witness = r.field_slice()?;
+        r.finish()?;
+        Ok(Self {
+            version: inner,
+            pc_trace,
+            witness,
+        })
+    }
+}

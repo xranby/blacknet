@@ -156,3 +156,48 @@ fn uniform_batch_end_to_end() {
             + 1000 * blacknet_kernel::verifiedcomputation::params::BYTE_FEE
     );
 }
+
+#[test]
+fn wire_compute_height_gated() {
+    use blacknet_kernel::verifiedcomputation::{
+        ACTIVATION_HEIGHT, Deploy, ProgramRegistry, WireCompute, accepted_wire_versions,
+    };
+    use blacknet_snark::proof::prove;
+
+    let mut registry = ProgramRegistry::new();
+    let id = registry.deploy(Deploy { code: square_add() }).unwrap();
+    let (io, proof) = prove(&square_add(), &[f(6)], 100).unwrap();
+    let tx = WireCompute {
+        program_id: id,
+        io,
+        proof_bytes: proof.encode(),
+    };
+    // At/after activation: accepted and verified from bytes.
+    assert!(registry.validate_wire(&tx, ACTIVATION_HEIGHT).is_ok());
+    assert_eq!(accepted_wire_versions(ACTIVATION_HEIGHT), &[1]);
+    // Before activation (only meaningful if ACTIVATION_HEIGHT > 0): rejected.
+    if ACTIVATION_HEIGHT > 0 {
+        assert!(registry.validate_wire(&tx, ACTIVATION_HEIGHT - 1).is_err());
+        assert_eq!(accepted_wire_versions(ACTIVATION_HEIGHT - 1).len(), 0);
+    }
+}
+
+#[test]
+fn wire_compute_rejects_corrupt_bytes() {
+    use blacknet_kernel::verifiedcomputation::{
+        ACTIVATION_HEIGHT, Deploy, ProgramRegistry, WireCompute,
+    };
+    use blacknet_snark::proof::prove;
+
+    let mut registry = ProgramRegistry::new();
+    let id = registry.deploy(Deploy { code: square_add() }).unwrap();
+    let (io, proof) = prove(&square_add(), &[f(6)], 100).unwrap();
+    let mut bytes = proof.encode();
+    bytes[0] = 0xFF; // corrupt the wire version
+    let tx = WireCompute {
+        program_id: id,
+        io,
+        proof_bytes: bytes,
+    };
+    assert!(registry.validate_wire(&tx, ACTIVATION_HEIGHT).is_err());
+}

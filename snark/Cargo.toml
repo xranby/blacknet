@@ -85,3 +85,7 @@ path = "src/test/rust/recursive.rs"
 [[test]]
 name = "layout_benchmark"
 path = "src/test/rust/layout_benchmark.rs"
+
+[[test]]
+name = "wire"
+path = "src/test/rust/wire.rs"

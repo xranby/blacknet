@@ -59,6 +59,14 @@ pub const DIGIT_BITS: u32 = 16;
 pub const DIGITS: usize = 4;
 /// Bits of a folding challenge (exceptional set size 2^16).
 pub const CHALLENGE_BITS: u32 = 16;
+
+/// Soundness repetitions of the folding challenge. A 16-bit challenge gives
+/// 2⁻¹⁶ soundness error per fold; for a chain of up to 2¹² folds, reaching
+/// 128-bit soundness needs `16·r ≥ 128 + 12`, i.e. `r ≥ 9` (derived in
+/// `snark/params.py::shipping_parameters`). Protocols that fold deep chains
+/// squeeze and check the fold relation `CHALLENGE_REPETITIONS` times with
+/// independent challenges; a single fold instance (depth 1) may use one.
+pub const CHALLENGE_REPETITIONS: usize = 9;
 /// Maximum infinity norm of an opening for the commitment to stay binding
 /// at [`SECURE_ROWS`]: 128-bit classical per `snark/params.py`. Norm growth
 /// per multifold is additive (`b + r·2^16 <= b + 2^32`), so this budget

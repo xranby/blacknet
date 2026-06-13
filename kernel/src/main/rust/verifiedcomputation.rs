@@ -226,3 +226,57 @@ impl UniformRegistry {
 pub const fn compute_batch_fee(executions: usize, proof_bytes: usize) -> u64 {
     params::VERIFY_FEE * executions as u64 + params::BYTE_FEE * proof_bytes as u64
 }
+
+/// Protocol height at which verified computation activates. Before this
+/// height the transaction types are rejected by consensus; at or after, the
+/// pinned wire versions are accepted. Reuses the kernel's existing
+/// height-gating discipline (other rules are gated the same way).
+/// A placeholder non-zero activation height; the real value is set by
+/// governance at deployment. Non-zero so the gate is meaningful.
+pub const ACTIVATION_HEIGHT: u64 = 1_000_000;
+
+/// Wire versions consensus accepts at a given height. Append-only: a new
+/// version is added here at the height it activates, and old versions stay
+/// valid so already-confirmed proofs keep verifying.
+#[must_use]
+pub const fn accepted_wire_versions(height: u64) -> &'static [u8] {
+    if height >= ACTIVATION_HEIGHT {
+        &[1]
+    } else {
+        &[]
+    }
+}
+
+/// A Compute transaction as it travels on the wire: the program id, the
+/// public IO, and the proof bytes. Validators decode then verify; decoding
+/// is canonical (rejects non-canonical field elements and trailing bytes),
+/// and the wire version must be accepted at the current height.
+pub struct WireCompute {
+    pub program_id: ProgramCommitment,
+    pub io: PublicIO,
+    pub proof_bytes: alloc::vec::Vec<u8>,
+}
+
+impl ProgramRegistry {
+    /// Decodes and validates a wire Compute transaction at `height`. This is
+    /// the consensus entry point: it pins the wire version, decodes
+    /// canonically, then runs the single proof verification. Never executes
+    /// the program.
+    pub fn validate_wire(&self, tx: &WireCompute, height: u64) -> Result<(), Error> {
+        if height < ACTIVATION_HEIGHT {
+            return Err(Error::UnknownProgram);
+        }
+        let wire_version = tx.proof_bytes.first().copied().unwrap_or(0);
+        if !accepted_wire_versions(height).contains(&wire_version) {
+            return Err(Error::Verify(VerifyError::Version(wire_version)));
+        }
+        let proof = Proof::decode(&tx.proof_bytes)
+            .map_err(|_| Error::Verify(VerifyError::Version(wire_version)))?;
+        let compute = Compute {
+            program_id: tx.program_id,
+            io: tx.io.clone(),
+            proof,
+        };
+        self.validate(&compute)
+    }
+}
