@@ -73,3 +73,7 @@ path = "src/test/rust/opening.rs"
 [[test]]
 name = "masking"
 path = "src/test/rust/masking.rs"
+
+[[test]]
+name = "unifiedcommitment"
+path = "src/test/rust/unifiedcommitment.rs"
