@@ -69,14 +69,24 @@ impl ShapedR1cs {
 }
 
 impl ShapedR1cs {
-    /// Builds an R1CS shape directly from quadratic constraints
-    /// `aⱼ·z ∘ bⱼ·z = cⱼ·z`, each given as three sparse rows over `columns`
-    /// variables. This is the bridge that lets a *circuit* — in particular
-    /// the IVC step verifier — be folded by the same HyperNova machinery as
-    /// VM traces, without routing through the (matrix-private) CCS type: the
-    /// caller supplies the rows the circuit would emit. `blacknet-arith`
-    /// already builds VM-trace matrices this way; the IVC driver reuses the
-    /// same idiom for the step relation.
+    /// Extracts the R1CS shape from a built circuit's `R1CS`, destructuring
+    /// the public `(a, b, c)` matrices. This is the bridge that lets a
+    /// *circuit* — in particular the IVC step verifier — be folded by the
+    /// same HyperNova machinery as VM traces, completing the recursive
+    /// fixed point: the circuit that verifies a fold is itself a foldable
+    /// instance.
+    #[must_use]
+    pub fn from_circuit_r1cs(r1cs: blacknet_crypto::r1cs::R1CS<F>) -> Self {
+        let (a, b, c): (
+            blacknet_crypto::matrix::SparseMatrix<F>,
+            blacknet_crypto::matrix::SparseMatrix<F>,
+            blacknet_crypto::matrix::SparseMatrix<F>,
+        ) = r1cs.into();
+        Self::new(a, b, c)
+    }
+
+    /// Builds an R1CS shape directly from quadratic constraint rows. Kept
+    /// for callers that assemble a relation without a `CircuitBuilder`.
     #[must_use]
     pub fn from_quadratic_rows(
         rows: &[(Vec<(usize, F)>, Vec<(usize, F)>, Vec<(usize, F)>)],

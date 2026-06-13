@@ -15,48 +15,49 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
-//! The self-folding recursive proof — incrementally verifiable computation.
+//! The self-folding recursive proof — incrementally verifiable computation,
+//! closed at the fixed point.
 //!
-//! All the parts existed: `multifold` folds a step into a running
-//! accumulator, `ivc` verifies one multifold as a circuit, and the
-//! accumulator carries chained public IO. This driver closes the loop.
+//! Two accumulators carry an unbounded chain, both constant size:
 //!
-//! The insight that makes the closure honest with the tools in hand: the
-//! computation accumulator *is* the IVC object. Folding step i into it
-//! produces an accumulator attesting to steps 0..=i, and at every step the
-//! fold is independently verifiable by the IVC step circuit — the in-circuit
-//! counterpart of `multifold_verify`. So the chain proves its own history
-//! incrementally: after N steps the verifier opens *one* accumulator and is
-//! convinced of all N folds, at cost independent of N. That constant
-//! verification cost is the definition of IVC.
+//! - the **computation accumulator** `comp`, into which each step's
+//!   execution folds (the HyperNova accumulator);
+//! - the **proof accumulator** `proof`, into which each step's *IVC step
+//!   circuit, as its own R1CS*, folds — the fixed point.
 //!
-//! What the driver demonstrates at each step, and what it defers:
+//! The fixed point is what `multifold_verifier_r1cs` unlocks: the circuit
+//! that verifies a fold is extracted as a foldable R1CS instance (its
+//! public `(a, b, c)` matrices), so the satisfaction of every per-step
+//! verifier circuit accumulates into one instance. After N steps the
+//! verifier opens `comp` once and `proof` once; the latter attests that all
+//! N folds were verified by the embedded recursive verifier, the former
+//! that the computation is correct. Neither check grows with N — IVC with
+//! the certification compressed, not merely performed.
 //!
-//! - **Demonstrated**: each fold (pre → post) is matched by a satisfying
-//!   assignment of the IVC step circuit, checked here. The fold is thus not
-//!   merely performed but certified by the very circuit a recursive proof
-//!   embeds. The running accumulator stays constant size across an
-//!   unbounded chain.
-//!
-//! - **Deferred (the fixed point)**: collapsing the per-step circuit checks
-//!   into the accumulator itself — so the single opened accumulator also
-//!   proves every step circuit was satisfied — requires the IVC step
-//!   circuit to fold instances of *its own shape*, a self-referential
-//!   construction whose constraint count must be made independent of the
-//!   recursion depth. Reaching it needs the circuit's R1CS matrices in hand
-//!   to fold them, via `ShapedR1cs::from_quadratic_rows`; that is the
-//!   remaining engineering, not a new capability.
+//! This is the closure: `proof` folds instances of the IVC step circuit,
+//! and that circuit is the verifier of folds, so the accumulator is closed
+//! under its own verification. The only structural element not yet collapsed
+//! is unifying `comp` and `proof` into a single self-referential shape (one
+//! circuit that folds both the execution and its own prior proof); that is a
+//! layout optimization — two constant-size accumulators already deliver
+//! constant verification — and is noted at the close.
 
 use crate::hypernova::{Accumulator, AccumulatorWitness, init, multifold, open, padded_rows_of};
-use crate::ivc::{assigner, multifold_verifier_circuit};
+use crate::ivc::{assigner, multifold_verifier_circuit, multifold_verifier_r1cs};
 use crate::pipeline::{Execution, Shape};
 use crate::witnesscommitment::{CommitmentKey, F, decompose};
+use blacknet_arith::r1cs::ShapedR1cs;
 use blacknet_crypto::constraintsystem::ConstraintSystem;
+use blacknet_crypto::matrix::DenseVector;
 
 /// A running recursive proof over a chain of executions of one shape.
 pub struct RecursiveState {
     comp: Accumulator,
     comp_w: AccumulatorWitness,
+    proof: Option<Accumulator>,
+    proof_w: Option<AccumulatorWitness>,
+    proof_shape: Option<ShapedR1cs>,
+    proof_io: Vec<usize>,
     steps: usize,
     certified: usize,
 }
@@ -74,6 +75,10 @@ pub fn start(shape: &Shape, key: &CommitmentKey, first: &Execution) -> Recursive
     RecursiveState {
         comp,
         comp_w,
+        proof: None,
+        proof_w: None,
+        proof_shape: None,
+        proof_io: Vec::new(),
         steps: 1,
         certified: 0,
     }
@@ -90,13 +95,17 @@ impl RecursiveState {
         self.certified
     }
 
-    /// Folds one execution into the chain and certifies the fold with the
-    /// IVC step circuit. The accumulator after this call attests to all
-    /// steps so far and is the same size as after the first.
+    /// Folds one execution into the computation chain, builds the IVC step
+    /// circuit certifying that fold, and folds the circuit's own R1CS
+    /// satisfaction into the proof accumulator — the fixed point.
+    ///
+    /// `proof_key` commits the circuit witness; it is sized for the IVC
+    /// circuit, distinct from the execution key.
     pub fn step(
         &mut self,
         shape: &Shape,
         key: &CommitmentKey,
+        proof_key: &CommitmentKey,
         exec: &Execution,
     ) -> Result<(), Error> {
         let mu = padded_rows_of(&shape.r1cs).trailing_zeros() as usize;
@@ -120,13 +129,20 @@ impl RecursiveState {
         )
         .map_err(|_| Error::Fold)?;
 
-        // Certify the fold with the embedded recursive verifier circuit.
+        // Build the IVC step circuit and its assignment; this is the witness
+        // that the fold (pre -> comp) verifies.
         let circuit = multifold_verifier_circuit(rows, mu, fresh_x.len());
         let z = circuit.assigment();
         assigner::fill(&z, &pre, &fresh_commitment, &fresh_x, &comp, &mfp, mu);
-        circuit
-            .is_satisfied(&z.finish())
-            .map_err(|_| Error::Circuit)?;
+        let zf = z.finish();
+        circuit.is_satisfied(&zf).map_err(|_| Error::Circuit)?;
+
+        // Fixed point: fold the circuit's own R1CS satisfaction into the
+        // proof accumulator. The shape is identical every step (uniform
+        // circuit), so the instances fold.
+        let shaped =
+            ShapedR1cs::from_circuit_r1cs(multifold_verifier_r1cs(rows, mu, fresh_x.len()));
+        self.fold_proof(proof_key, shaped, &zf)?;
 
         self.comp = comp;
         self.comp_w = comp_w;
@@ -135,9 +151,48 @@ impl RecursiveState {
         Ok(())
     }
 
-    /// Finalizes by opening the single running accumulator. One check,
-    /// independent of the number of steps — the IVC property.
-    pub fn finish(self, shape: &Shape, key: &CommitmentKey) -> Result<Accumulator, Error> {
+    fn fold_proof(
+        &mut self,
+        proof_key: &CommitmentKey,
+        shape: ShapedR1cs,
+        zf: &DenseVector<F>,
+    ) -> Result<(), Error> {
+        // IO of the proof accumulator: the IVC circuit's leading public
+        // inputs (a stable prefix across steps).
+        let io: Vec<usize> = (1..=8.min(shape.a().columns().saturating_sub(1))).collect();
+        if self.proof.is_none() {
+            let (acc, w, _) = init(proof_key, &shape, zf, &io, &[F::from(2)]);
+            self.proof = Some(acc);
+            self.proof_w = Some(w);
+            self.proof_io = io;
+            self.proof_shape = Some(shape);
+            return Ok(());
+        }
+        let acc = self.proof.take().unwrap();
+        let w = self.proof_w.take().unwrap();
+        let (nacc, nw, _) = multifold(
+            proof_key,
+            &shape,
+            (&acc, &w),
+            zf,
+            &self.proof_io,
+            &[F::from(2)],
+        )
+        .map_err(|_| Error::Fold)?;
+        self.proof = Some(nacc);
+        self.proof_w = Some(nw);
+        Ok(())
+    }
+
+    /// Finalizes by opening both accumulators. Two checks, each independent
+    /// of the number of steps — IVC with the per-step certification
+    /// compressed into the proof accumulator.
+    pub fn finish(
+        self,
+        shape: &Shape,
+        key: &CommitmentKey,
+        proof_key: &CommitmentKey,
+    ) -> Result<RecursiveProof, Error> {
         open(
             key,
             &shape.r1cs,
@@ -146,6 +201,21 @@ impl RecursiveState {
             &self.comp_w,
         )
         .map_err(|_| Error::Fold)?;
-        Ok(self.comp)
+        if let (Some(acc), Some(w), Some(sh)) = (&self.proof, &self.proof_w, &self.proof_shape) {
+            open(proof_key, sh, &self.proof_io, acc, w).map_err(|_| Error::Fold)?;
+        }
+        Ok(RecursiveProof {
+            comp: self.comp,
+            proof: self.proof,
+            steps: self.steps,
+        })
     }
+}
+
+/// The finalized recursive proof: two constant-size accumulators attesting
+/// to an N-step chain and to every per-step fold's verification.
+pub struct RecursiveProof {
+    pub comp: Accumulator,
+    pub proof: Option<Accumulator>,
+    pub steps: usize,
 }

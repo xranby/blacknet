@@ -57,6 +57,22 @@ pub fn multifold_verifier_circuit(
     mu: usize,
     xlen: usize,
 ) -> CustomizableConstraintSystem<F> {
+    build_multifold_verifier(rows, mu, xlen).ccs()
+}
+
+/// The same circuit as an `R1CS`, whose public `(a, b, c)` matrices feed
+/// `ShapedR1cs::from_circuit_r1cs` — the bridge that makes the IVC step
+/// verifier itself foldable, closing the recursive fixed point.
+#[must_use]
+pub fn multifold_verifier_r1cs(
+    rows: usize,
+    mu: usize,
+    xlen: usize,
+) -> blacknet_crypto::r1cs::R1CS<F> {
+    build_multifold_verifier(rows, mu, xlen).r1cs()
+}
+
+fn build_multifold_verifier(rows: usize, mu: usize, xlen: usize) -> CircuitBuilder<'static, F> {
     let circuit = CircuitBuilder::<F>::new(2);
     {
         let scope = circuit.scope("multifold_verifier");
@@ -141,7 +157,7 @@ pub fn multifold_verifier_circuit(
             scope.constrain(&r * &fresh_x[i], &new_x[i] - &acc_x[i]);
         }
     }
-    circuit.ccs()
+    circuit
 }
 
 /// Mirrors [`multifold_verifier_circuit`] numerically against the plain

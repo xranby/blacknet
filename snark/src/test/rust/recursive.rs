@@ -15,6 +15,9 @@
  * along with this program. If not, see <https://www.gnu.org/licenses/>.
  */
 
+use blacknet_arith::r1cs::ShapedR1cs;
+use blacknet_crypto::constraintsystem::ConstraintSystem;
+use blacknet_snark::ivc::multifold_verifier_r1cs;
 use blacknet_snark::pipeline::{Shape, prove_execution};
 use blacknet_snark::recursive::{Error, start};
 use blacknet_snark::witnesscommitment::{CommitmentKey, F};
@@ -34,15 +37,23 @@ fn program() -> Vec<Instruction<F>> {
     ]
 }
 
-fn setup() -> (Shape, CommitmentKey) {
+fn setup() -> (Shape, CommitmentKey, CommitmentKey) {
     let shape = Shape::derive(program(), &[f(1)], 100).unwrap();
     let key = CommitmentKey::setup(shape.elements, TEST_ROWS);
-    (shape, key)
+    // The proof key commits the IVC circuit witness; size it to that width.
+    let mu = (shape.r1cs.a().rows().next_power_of_two().trailing_zeros()) as usize;
+    let circuit = ShapedR1cs::from_circuit_r1cs(multifold_verifier_r1cs(
+        TEST_ROWS,
+        mu,
+        shape.io_positions.len(),
+    ));
+    let proof_key = CommitmentKey::setup(circuit.a().columns(), TEST_ROWS);
+    (shape, key, proof_key)
 }
 
 #[test]
 fn recursive_chain_constant_size() {
-    let (shape, key) = setup();
+    let (shape, key, proof_key) = setup();
     let exec = |x: i32| prove_execution(&shape, &key, &[f(x)]).unwrap();
 
     let first = exec(2);
@@ -51,7 +62,7 @@ fn recursive_chain_constant_size() {
 
     for x in [3, 4, 5, 6, 7, 8] {
         let e = exec(x);
-        state.step(&shape, &key, &e).unwrap();
+        state.step(&shape, &key, &proof_key, &e).unwrap();
     }
     assert_eq!(state.steps(), 7);
     assert_eq!(state.certified(), 6); // every fold certified by the IVC circuit
@@ -59,17 +70,18 @@ fn recursive_chain_constant_size() {
     assert_eq!(state_commitment_len(&state), size_after_first);
 
     // One opening finalizes the whole chain.
-    let acc = state.finish(&shape, &key).unwrap();
-    assert_eq!(acc.commitment.dimension(), size_after_first);
+    let proof = state.finish(&shape, &key, &proof_key).unwrap();
+    assert_eq!(proof.comp.commitment.dimension(), size_after_first);
+    assert!(proof.proof.is_some()); // the fixed-point accumulator exists
 }
 
 #[test]
 fn single_step_is_valid() {
-    let (shape, key) = setup();
+    let (shape, key, proof_key) = setup();
     let first = prove_execution(&shape, &key, &[f(9)]).unwrap();
     let state = start(&shape, &key, &first);
     assert_eq!(state.steps(), 1);
-    assert!(state.finish(&shape, &key).is_ok());
+    assert!(state.finish(&shape, &key, &proof_key).is_ok());
 }
 
 #[test]
@@ -77,12 +89,12 @@ fn every_fold_is_circuit_certified() {
     // The certified count tracks folds: if the IVC circuit ever rejected a
     // fold, step() would return Err(Circuit). Reaching certified == folds
     // is the evidence the recursive verifier accepts each step.
-    let (shape, key) = setup();
+    let (shape, key, proof_key) = setup();
     let first = prove_execution(&shape, &key, &[f(2)]).unwrap();
     let mut state = start(&shape, &key, &first);
     for x in [10, 20, 30] {
         let e = prove_execution(&shape, &key, &[f(x)]).unwrap();
-        assert_eq!(state.step(&shape, &key, &e), Ok(()));
+        assert_eq!(state.step(&shape, &key, &proof_key, &e), Ok(()));
     }
     assert_eq!(state.certified(), 3);
 }
