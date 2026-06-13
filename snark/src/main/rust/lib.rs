@@ -24,6 +24,7 @@ pub mod fold;
 pub mod hypernova;
 pub mod ivc;
 pub mod modulecommitment;
+pub mod opening;
 pub mod pipeline;
 pub mod proof;
 pub mod recursion;

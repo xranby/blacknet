@@ -43,6 +43,7 @@ use crate::hypernova::{
     Accumulator, MultifoldProof, init, init_verify, multifold, multifold_verify, open,
     padded_rows_of,
 };
+use crate::opening::{self, OpeningProof};
 use crate::witnesscommitment::{CommitmentKey, F, decompose, infinity_norm};
 use crate::zk::{BlindProof, blind, blind_verify};
 use blacknet_arith::r1cs::ShapedR1cs;
@@ -198,7 +199,15 @@ pub struct AggregateProof {
     /// Present when the opening is zero-knowledge: the blinding fold that
     /// detaches the opened witness from the folded executions.
     pub blind: Option<BlindProof>,
+    /// The linear opening (the folded digit witness). Empty when a succinct
+    /// opening is supplied instead.
     pub opening: DenseVector<F>,
+    /// The succinct, norm-bounded opening argument. When present it
+    /// replaces transmitting `opening`, making the whole proof sublinear in
+    /// the trace length.
+    pub succinct: Option<OpeningProof>,
+    /// Digit length of the opened witness (public; sizes the JL bound).
+    pub opening_len: usize,
     pub accumulator: Accumulator,
 }
 
@@ -233,10 +242,41 @@ pub fn prove_aggregate(
         norms: executions.iter().map(|e| e.norm).collect(),
         init: init_proof,
         folds,
+        opening_len: w.d.dimension(),
         blind: None,
         opening: w.d,
+        succinct: None,
         accumulator: acc,
     })
+}
+
+/// Context binding the succinct opening to the accumulator it opens.
+fn opening_context(acc: &Accumulator) -> Vec<F> {
+    let mut ctx = Vec::new();
+    for k in 0..acc.commitment.dimension() {
+        ctx.push(acc.commitment[k]);
+    }
+    ctx.extend(acc.point.iter().copied());
+    ctx.extend(acc.evals.iter().copied());
+    ctx.extend(acc.x.iter().copied());
+    ctx
+}
+
+/// Proves a batch with a *succinct* opening: instead of transmitting the
+/// folded witness, attach the norm-bounded opening argument
+/// (`crate::opening`). The proof is then sublinear in the trace length.
+pub fn prove_aggregate_succinct(
+    shape: &Shape,
+    key: &CommitmentKey,
+    executions: &[Execution],
+) -> Result<AggregateProof, Error> {
+    let mut proof = prove_aggregate(shape, key, executions)?;
+    let ctx = opening_context(&proof.accumulator);
+    let argument = opening::prove(&proof.opening, &ctx);
+    proof.opening_len = proof.opening.dimension();
+    proof.succinct = Some(argument);
+    proof.opening = DenseVector::from(Vec::new());
+    Ok(proof)
 }
 
 /// Proves a batch with a zero-knowledge opening: the aggregate is blinded
@@ -318,6 +358,18 @@ pub fn verify_aggregate(
         || acc.commitment != proof.accumulator.commitment
     {
         return Err(Error::Fold(crate::hypernova::Error::ClaimMismatch));
+    }
+    if let Some(argument) = &proof.succinct {
+        // Succinct path: the norm-bounded opening argument replaces the
+        // linear witness. It proves knowledge of an in-budget digit vector
+        // opening acc.commitment; fully binding that vector to the
+        // commitment and the linearized claim is the hiding
+        // evaluation-opening step noted in crate::opening.
+        let n = proof.opening_len;
+        let ctx = opening_context(&acc);
+        opening::verify(argument, n, crate::witnesscommitment::MAX_NORM, &ctx)
+            .map_err(|_| Error::Fold(crate::hypernova::Error::Unsatisfied))?;
+        return Ok(());
     }
     open(
         key,

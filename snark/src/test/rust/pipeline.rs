@@ -106,3 +106,35 @@ fn nonuniform_input_rejected_at_proving() {
         Err(Error::NotUniform)
     ));
 }
+
+#[test]
+fn succinct_opening_is_sublinear_and_verifies() {
+    use blacknet_snark::pipeline::prove_aggregate_succinct;
+    let shape = Shape::derive(cube_program(), &[f(1)], 100).unwrap();
+    let key = CommitmentKey::setup(shape.elements, TEST_ROWS);
+    let executions: Vec<_> = [3i32, 8, 21, 100]
+        .iter()
+        .map(|&x| prove_execution(&shape, &key, &[f(x)]).unwrap())
+        .collect();
+    let proof = prove_aggregate_succinct(&shape, &key, &executions).unwrap();
+    // The linear witness is gone; the proof carries only the argument.
+    assert!(proof.succinct.is_some());
+    assert_eq!(proof.opening.dimension(), 0);
+    assert!(verify_aggregate(&shape, &key, &proof).is_ok());
+}
+
+#[test]
+fn succinct_opening_rejects_tampered_argument() {
+    use blacknet_snark::pipeline::prove_aggregate_succinct;
+    let shape = Shape::derive(cube_program(), &[f(1)], 100).unwrap();
+    let key = CommitmentKey::setup(shape.elements, TEST_ROWS);
+    let executions: Vec<_> = [2i32, 5]
+        .iter()
+        .map(|&x| prove_execution(&shape, &key, &[f(x)]).unwrap())
+        .collect();
+    let mut proof = prove_aggregate_succinct(&shape, &key, &executions).unwrap();
+    if let Some(arg) = proof.succinct.as_mut() {
+        arg.bit_eval += f(1);
+    }
+    assert!(verify_aggregate(&shape, &key, &proof).is_err());
+}
