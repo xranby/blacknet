@@ -23,6 +23,7 @@ pub mod committedfold;
 pub mod fold;
 pub mod hypernova;
 pub mod ivc;
+pub mod masking;
 pub mod modulecommitment;
 pub mod opening;
 pub mod pipeline;

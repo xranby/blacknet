@@ -69,3 +69,7 @@ path = "src/test/rust/zk.rs"
 [[test]]
 name = "opening"
 path = "src/test/rust/opening.rs"
+
+[[test]]
+name = "masking"
+path = "src/test/rust/masking.rs"

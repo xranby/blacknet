@@ -43,7 +43,8 @@ use crate::hypernova::{
     Accumulator, MultifoldProof, init, init_verify, multifold, multifold_verify, open,
     padded_rows_of,
 };
-use crate::opening::{self, OpeningProof};
+use crate::masking::hiding;
+use crate::opening::{self, OpeningProof, ZkOpeningProof};
 use crate::witnesscommitment::{CommitmentKey, F, decompose, infinity_norm};
 use crate::zk::{BlindProof, blind, blind_verify};
 use blacknet_arith::r1cs::ShapedR1cs;
@@ -163,9 +164,10 @@ pub fn prove_execution_salted(
         .iter()
         .map(|&i| execution.witness[i])
         .collect();
+    let hiding_salt = hiding::sample(salt);
     let witness: DenseVector<F> = (0..execution.witness.dimension())
         .map(|i| execution.witness[i])
-        .chain(sample_salt(salt))
+        .chain(hiding_salt)
         .collect();
     let d = decompose(&witness);
     Ok(Execution {
@@ -173,18 +175,6 @@ pub fn prove_execution_salted(
         commitment: key.commit(&d),
         norm: infinity_norm(&d),
         witness,
-    })
-}
-
-fn sample_salt(n: usize) -> impl Iterator<Item = F> {
-    use blacknet_crypto::algebra::IntegerRing;
-    use blacknet_crypto::random::{FAST_RNG, UniformGenerator};
-    (0..n).map(|_| {
-        FAST_RNG.with(|rng| {
-            let mut bytes = [0u8; 8];
-            rng.borrow_mut().fill(&mut bytes);
-            <F as IntegerRing>::new((u64::from_le_bytes(bytes) >> 3) as i64)
-        })
     })
 }
 
@@ -208,6 +198,9 @@ pub struct AggregateProof {
     pub succinct: Option<OpeningProof>,
     /// Digit length of the opened witness (public; sizes the JL bound).
     pub opening_len: usize,
+    /// A zero-knowledge succinct opening: masked sumcheck, hides the
+    /// witness evaluations as well as omitting the witness.
+    pub succinct_zk: Option<ZkOpeningProof>,
     pub accumulator: Accumulator,
 }
 
@@ -246,6 +239,7 @@ pub fn prove_aggregate(
         blind: None,
         opening: w.d,
         succinct: None,
+        succinct_zk: None,
         accumulator: acc,
     })
 }
@@ -275,6 +269,23 @@ pub fn prove_aggregate_succinct(
     let argument = opening::prove(&proof.opening, &ctx);
     proof.opening_len = proof.opening.dimension();
     proof.succinct = Some(argument);
+    proof.opening = DenseVector::from(Vec::new());
+    Ok(proof)
+}
+
+/// As [`prove_aggregate_succinct`] but with the zero-knowledge masked
+/// opening: the proof is sublinear AND reveals nothing about the witness
+/// evaluations. The fully private path.
+pub fn prove_aggregate_succinct_zk(
+    shape: &Shape,
+    key: &CommitmentKey,
+    executions: &[Execution],
+) -> Result<AggregateProof, Error> {
+    let mut proof = prove_aggregate(shape, key, executions)?;
+    let ctx = opening_context(&proof.accumulator);
+    let argument = opening::prove_zk(&proof.opening, &ctx);
+    proof.opening_len = proof.opening.dimension();
+    proof.succinct_zk = Some(argument);
     proof.opening = DenseVector::from(Vec::new());
     Ok(proof)
 }
@@ -358,6 +369,13 @@ pub fn verify_aggregate(
         || acc.commitment != proof.accumulator.commitment
     {
         return Err(Error::Fold(crate::hypernova::Error::ClaimMismatch));
+    }
+    if let Some(argument) = &proof.succinct_zk {
+        let n = proof.opening_len;
+        let ctx = opening_context(&acc);
+        opening::verify_zk(argument, n, crate::witnesscommitment::MAX_NORM, &ctx)
+            .map_err(|_| Error::Fold(crate::hypernova::Error::Unsatisfied))?;
+        return Ok(());
     }
     if let Some(argument) = &proof.succinct {
         // Succinct path: the norm-bounded opening argument replaces the

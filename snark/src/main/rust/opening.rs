@@ -66,7 +66,7 @@
 use crate::witnesscommitment::{DIGIT_BITS, F};
 use blacknet_crypto::johnsonlindenstrauss::JohnsonLindenstrauss;
 use blacknet_crypto::matrix::DenseVector;
-use blacknet_crypto::polynomial::BinarityPolynomial;
+use blacknet_crypto::polynomial::{BinarityPolynomial, Point, Polynomial};
 use blacknet_crypto::random::UniformDistribution;
 use blacknet_crypto::sumcheck::{Proof as SumCheckProof, SumCheck};
 use blacknet_crypto::symmetric::{DuplexPoseidon2Pervushin, Duplexer};
@@ -260,4 +260,130 @@ impl blacknet_crypto::random::UniformGenerator for TranscriptGen<'_> {
         use blacknet_crypto::random::Distribution;
         self.dist.sample(self.duplex)
     }
+}
+
+/// A zero-knowledge opening: the binarity sumcheck is masked (Libra), so
+/// the transmitted round polynomials reveal nothing about the bits, and the
+/// hiding randomness commitment detaches the disclosed evaluation.
+pub struct ZkOpeningProof {
+    pub masked: SumCheckProof<F>,
+    pub mask_sum: F,
+    pub bit_eval: F,
+    pub mask_eval: F,
+    pub projection: DenseVector<F>,
+}
+
+type ZkSc = SumCheck<F, F, crate::masking::MaskedBinarity, D, E>;
+
+/// Proves the opening in zero knowledge: same binarity-and-norm statement,
+/// but the sumcheck runs on `binarity + rho*mask` for a fresh random mask,
+/// masking every round polynomial.
+pub fn prove_zk(d: &DenseVector<F>, context: &[F]) -> ZkOpeningProof {
+    use crate::masking::{MaskedBinarity, sample_mask};
+    use blacknet_crypto::random::{FAST_RNG, UniformGenerator};
+
+    let b = decompose_bits(d);
+    let padded = pad_pow2(&b);
+    let mu = padded.len().trailing_zeros() as usize;
+    let f = BinarityPolynomial::from(padded.clone());
+
+    let mut duplex = D::default();
+    let mut mirror = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    mirror.absorb_iter(context.iter().copied());
+
+    // Sample the mask, commit to its sum into the transcript, squeeze rho.
+    let g = FAST_RNG.with(|rng| {
+        let mut rng = rng.borrow_mut();
+        let mut bytes = || {
+            let mut buf = [0u8; 8];
+            rng.fill(&mut buf);
+            u64::from_le_bytes(buf)
+        };
+        sample_mask(mu, 2, &mut bytes)
+    });
+    let mask_sum = g.sum();
+    duplex.absorb(mask_sum);
+    mirror.absorb(mask_sum);
+    let rho: F = duplex.squeeze();
+    let _: F = mirror.squeeze();
+
+    let masked = MaskedBinarity::new(f, g.clone(), rho);
+    let claimed = masked.claimed_sum();
+    let mut exceptional = E::default();
+    let proof = ZkSc::prove(masked, claimed, &mut duplex, &mut exceptional);
+
+    // Recover the point on the mirror; disclose the two evaluations.
+    let point = {
+        let shape = shape_masked(mu);
+        let mut ex = E::default();
+        let (pt, _) = ZkSc::verify_early_stopping(&shape, claimed, &proof, &mut mirror, &mut ex)
+            .expect("prover proof replays");
+        let pt: Vec<F> = pt.into();
+        pt
+    };
+    let bit_eval = mle_point(&padded, &point);
+    let mask_eval = g.point(&Point::from(point.clone()));
+    duplex.absorb(bit_eval);
+    duplex.absorb(mask_eval);
+    let jl = squeeze_jl(&mut duplex, d.dimension());
+    let projection = jl.project(d);
+    ZkOpeningProof {
+        masked: proof,
+        mask_sum,
+        bit_eval,
+        mask_eval,
+        projection,
+    }
+}
+
+/// Verifies a zero-knowledge opening.
+pub fn verify_zk(
+    proof: &ZkOpeningProof,
+    n: usize,
+    b_bound: u128,
+    context: &[F],
+) -> Result<(), Error> {
+    let nbits = n * DIGIT_BITS as usize;
+    let mu = nbits.next_power_of_two().trailing_zeros() as usize;
+    let mut duplex = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    duplex.absorb(proof.mask_sum);
+    let rho: F = duplex.squeeze();
+
+    let shape = shape_masked(mu);
+    let claimed = rho * proof.mask_sum; // binarity sum is 0
+    let mut exceptional = E::default();
+    let (_point, s) = ZkSc::verify_early_stopping(
+        &shape,
+        claimed,
+        &proof.masked,
+        &mut duplex,
+        &mut exceptional,
+    )
+    .map_err(|_| Error::Binarity)?;
+    // Final check: f(rho_pt) + rho*g(rho_pt) == s, with f(rho_pt) the
+    // binarity value bit_eval^2 - bit_eval.
+    let f_val = proof.bit_eval * proof.bit_eval - proof.bit_eval;
+    if f_val + rho * proof.mask_eval != s {
+        return Err(Error::Binarity);
+    }
+    duplex.absorb(proof.bit_eval);
+    duplex.absorb(proof.mask_eval);
+    if proof.projection.dimension() != JL_ROWS {
+        return Err(Error::ProjectionShape);
+    }
+    let _jl = squeeze_jl(&mut duplex, n);
+    if norm_squared(&proof.projection) > jl_norm_limit(n, b_bound) {
+        return Err(Error::NormExceeded);
+    }
+    Ok(())
+}
+
+fn shape_masked(mu: usize) -> crate::masking::MaskedBinarity {
+    use crate::masking::{MaskedBinarity, sample_mask};
+    let f = BinarityPolynomial::from(vec![F::from(0); 1 << mu]);
+    let mut zero = || 0u64;
+    let g = sample_mask(mu, 2, &mut zero);
+    MaskedBinarity::new(f, g, F::from(0))
 }

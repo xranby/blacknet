@@ -138,3 +138,24 @@ fn succinct_opening_rejects_tampered_argument() {
     }
     assert!(verify_aggregate(&shape, &key, &proof).is_err());
 }
+
+#[test]
+fn succinct_zk_opening_verifies_and_hides() {
+    use blacknet_snark::pipeline::prove_aggregate_succinct_zk;
+    let shape = Shape::derive(cube_program(), &[f(1)], 100).unwrap();
+    let key = CommitmentKey::setup(shape.elements, TEST_ROWS);
+    let executions: Vec<_> = [3i32, 8, 21]
+        .iter()
+        .map(|&x| prove_execution(&shape, &key, &[f(x)]).unwrap())
+        .collect();
+    let p1 = prove_aggregate_succinct_zk(&shape, &key, &executions).unwrap();
+    let p2 = prove_aggregate_succinct_zk(&shape, &key, &executions).unwrap();
+    assert!(p1.succinct_zk.is_some());
+    assert_eq!(p1.opening.dimension(), 0);
+    // Fresh mask each run: disclosed evaluations differ, both verify.
+    let e1 = p1.succinct_zk.as_ref().unwrap().bit_eval;
+    let e2 = p2.succinct_zk.as_ref().unwrap().bit_eval;
+    assert_ne!(e1, e2);
+    assert!(verify_aggregate(&shape, &key, &p1).is_ok());
+    assert!(verify_aggregate(&shape, &key, &p2).is_ok());
+}
