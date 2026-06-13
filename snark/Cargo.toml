@@ -81,3 +81,7 @@ path = "src/test/rust/unifiedcommitment.rs"
 [[test]]
 name = "recursive"
 path = "src/test/rust/recursive.rs"
+
+[[test]]
+name = "layout_benchmark"
+path = "src/test/rust/layout_benchmark.rs"
