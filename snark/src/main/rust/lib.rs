@@ -29,6 +29,7 @@ pub mod opening;
 pub mod pipeline;
 pub mod proof;
 pub mod recursion;
+pub mod recursive;
 pub mod unifiedcommitment;
 pub mod witnesscommitment;
 pub mod zk;

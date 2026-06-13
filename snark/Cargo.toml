@@ -77,3 +77,7 @@ path = "src/test/rust/masking.rs"
 [[test]]
 name = "unifiedcommitment"
 path = "src/test/rust/unifiedcommitment.rs"
+
+[[test]]
+name = "recursive"
+path = "src/test/rust/recursive.rs"

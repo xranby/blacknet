@@ -132,6 +132,14 @@ pub struct Execution {
     witness: DenseVector<F>,
 }
 
+impl Execution {
+    /// The folded witness, for the recursive driver (`crate::recursive`).
+    #[must_use]
+    pub const fn witness(&self) -> &DenseVector<F> {
+        &self.witness
+    }
+}
+
 /// Runs the program on `inputs` and prepares the instance. Fails if the
 /// execution leaves the shape's control flow (non-uniform input).
 pub fn prove_execution(
