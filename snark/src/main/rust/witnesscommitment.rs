@@ -121,17 +121,15 @@ impl CommitmentKey {
 }
 
 /// Decomposes field elements into base-2¹⁶ digits. `‖d‖∞ < 2¹⁶`.
+///
+/// This is the gadget decomposition specialized to scalars; it delegates to
+/// `latticegadget::decompose_scalars` so the commitment and the lattice
+/// gadget share one decomposition kernel (eprint 2018/946) rather than
+/// keeping a separate copy here.
 #[must_use]
 pub fn decompose(z: &DenseVector<F>) -> DenseVector<F> {
-    let mut d = Vec::with_capacity(z.dimension() * DIGITS);
-    for i in 0..z.dimension() {
-        let mut n = z[i].canonical() as u64;
-        for _ in 0..DIGITS {
-            d.push(F::from((n & ((1 << DIGIT_BITS) - 1)) as u32));
-            n >>= DIGIT_BITS;
-        }
-    }
-    DenseVector::from(d)
+    let radix_mask = (1i64 << DIGIT_BITS) - 1;
+    blacknet_crypto::latticegadget::decompose_scalars(z, radix_mask, DIGIT_BITS, DIGITS)
 }
 
 /// Recomposes digits: the linear gadget map `G·d`.

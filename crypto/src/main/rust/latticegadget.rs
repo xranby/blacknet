@@ -52,6 +52,30 @@ fn decompose_slice<Z: IntegerRing, R: PolynomialRing<Z> + Clone>(
     pieces
 }
 
+/// Decomposes a vector of ring *scalars* (not polynomials) into `digits`
+/// base-radix limbs, low limb first, laid out `digits`-contiguously per
+/// scalar: `[s0_d0, s0_d1, …, s1_d0, …]`. This is the gadget decomposition
+/// specialized to degree-0 elements — the form the lattice witness
+/// commitment uses, where each field element splits into base-`2^shift`
+/// digits bounded by `radix_mask`. Sharing it here keeps one decomposition
+/// kernel rather than a bespoke copy in the commitment.
+pub fn decompose_scalars<Z: IntegerRing>(
+    scalars: &DenseVector<Z>,
+    radix_mask: <Z::Int as Integer>::Limb,
+    radix_shift: u32,
+    digits: usize,
+) -> DenseVector<Z> {
+    let mut pieces = Vec::with_capacity(scalars.dimension() * digits);
+    for i in 0..scalars.dimension() {
+        let mut representative = scalars[i].canonical();
+        for _ in 0..digits {
+            pieces.push(Z::with_limb(representative & radix_mask));
+            representative >>= radix_shift;
+        }
+    }
+    pieces.into()
+}
+
 pub fn decompose_polynomial<Z: IntegerRing, R: PolynomialRing<Z> + Clone>(
     polynomial: &R,
     radix_mask: <Z::Int as Integer>::Limb,

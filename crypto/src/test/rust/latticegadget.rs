@@ -61,3 +61,44 @@ fn polynomial() {
     let p = latticegadget::vector::<Z, R>(b, &Z::from(65536), 4);
     assert_eq!(d.dot(&p), a * b);
 }
+
+#[test]
+fn scalar_decomposition_round_trips() {
+    // Base-2^16 digit decomposition of scalar field elements: the form the
+    // lattice witness commitment relies on. Decompose, then recompose by the
+    // gadget powers, and check we recover the originals.
+    let radix_mask = (1i64 << 16) - 1;
+    let v: DenseVector<Z> = [
+        Z::from(0),
+        Z::from(1),
+        Z::from(65535),
+        Z::from(65536),
+        Z::from(123456789),
+    ]
+    .into_iter()
+    .collect();
+    let digits = 4;
+    let d = latticegadget::decompose_scalars(&v, radix_mask, 16, digits);
+    assert_eq!(d.dimension(), v.dimension() * digits);
+
+    // Each scalar's digits are contiguous, low limb first; recompose.
+    for i in 0..v.dimension() {
+        let mut acc = Z::from(0);
+        for k in (0..digits).rev() {
+            acc = acc * Z::from(65536) + d[i * digits + k];
+        }
+        assert_eq!(acc, v[i], "scalar {i} round-trips through its digits");
+    }
+}
+
+#[test]
+fn scalar_digits_are_bounded() {
+    // Every digit is < 2^16: the norm bound the commitment depends on.
+    let radix_mask = (1i64 << 16) - 1;
+    let v: DenseVector<Z> = (0..16).map(|i| Z::from(i * 99991)).collect();
+    let d = latticegadget::decompose_scalars(&v, radix_mask, 16, 4);
+    for i in 0..d.dimension() {
+        assert!(d[i].canonical() < (1i64 << 16), "digit {i} within 2^16");
+        assert!(d[i].canonical() >= 0);
+    }
+}
