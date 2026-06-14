@@ -102,3 +102,8 @@ path = "src/test/rust/universal_complete.rs"
 [[test]]
 name = "programbinding"
 path = "src/test/rust/programbinding.rs"
+
+[[test]]
+name = "universal_run"
+path = "src/test/rust/universal_run.rs"
+
