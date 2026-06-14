@@ -115,3 +115,7 @@ path = "src/test/rust/differentiators.rs"
 [[test]]
 name = "usecases_zkfi"
 path = "src/test/rust/usecases_zkfi.rs"
+
+[[test]]
+name = "compose_blacklemon_zkvm"
+path = "src/test/rust/compose_blacklemon_zkvm.rs"

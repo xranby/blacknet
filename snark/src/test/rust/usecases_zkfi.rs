@@ -91,7 +91,6 @@ fn payment_batch_conserves_value() {
     let n = deltas.len();
 
     let mut prog = store_array(&deltas);
-    let base = prog.len();
     // acc = 0, idx = 0, limit = n, step = 1
     prog.push(loadimm(2, 0));
     prog.push(loadimm(5, 0));
