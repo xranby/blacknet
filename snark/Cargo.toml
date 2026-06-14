@@ -93,3 +93,8 @@ path = "src/test/rust/wire.rs"
 [[test]]
 name = "universal"
 path = "src/test/rust/universal.rs"
+
+[[test]]
+name = "universal_complete"
+path = "src/test/rust/universal_complete.rs"
+

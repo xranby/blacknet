@@ -32,6 +32,7 @@ pub mod recursion;
 pub mod recursive;
 pub mod unifiedcommitment;
 pub mod universal;
+pub mod universal_complete;
 pub mod wire;
 pub mod witnesscommitment;
 pub mod zk;
