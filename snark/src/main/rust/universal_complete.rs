@@ -60,8 +60,8 @@ use blacknet_crypto::matrix::DenseVector;
 /// Registers in the machine (matches `blacknet-arith`'s `REGISTERS`).
 pub const REGISTERS: usize = 8;
 
-/// Opcodes, in flag order. Adds branch/jump/halt to the arithmetic core.
-pub const OPCODES: usize = 10;
+/// Opcodes, in flag order. Arithmetic + control flow + memory.
+pub const OPCODES: usize = 12;
 
 pub mod op {
     pub const ADD: usize = 0;
@@ -74,11 +74,16 @@ pub mod op {
     pub const BNE: usize = 7;
     pub const JUMP: usize = 8;
     pub const HALT: usize = 9;
+    /// `rd ← mem[rs2]` (address from rs2, value into rd).
+    pub const LOAD: usize = 10;
+    /// `mem[rs2] ← rs1` (address from rs2, value from rs1).
+    pub const STORE: usize = 11;
 }
 
-/// Which opcodes write a destination register.
+/// Which opcodes write a destination register. Load writes (the loaded
+/// value); Store does not.
 const fn writes_register(opcode: usize) -> bool {
-    opcode <= op::LOADIMM
+    opcode <= op::LOADIMM || opcode == op::LOAD
 }
 
 /// Column layout of one complete step's witness.
@@ -98,7 +103,14 @@ impl Layout {
     pub const DINV: usize = 10;
     /// Branch-taken indicator (boolean): 1 if the branch edge is taken.
     pub const TAKEN: usize = 11;
-    pub const PRE: usize = 12;
+    /// Memory access of this step: address, value, and a write flag (1 for
+    /// Store, 0 for Load or non-memory). The `(address, value)` pair is the
+    /// local view; global consistency is the offline memory-checking
+    /// argument over all steps' accesses (`memory` module).
+    pub const MEM_ADDR: usize = 12;
+    pub const MEM_VALUE: usize = 13;
+    pub const MEM_WRITE: usize = 14;
+    pub const PRE: usize = 15;
     pub const POST: usize = Self::PRE + REGISTERS;
     pub const FLAGS: usize = Self::POST + REGISTERS;
     pub const DSEL: usize = Self::FLAGS + OPCODES;
@@ -120,6 +132,14 @@ type Row = (Vec<(usize, F)>, Vec<(usize, F)>, Vec<(usize, F)>);
 
 fn one() -> F {
     F::from(1)
+}
+
+/// Flags of the register-writing opcodes (arithmetic family plus Load),
+/// used as the write mask in the register-file update and dsel sum.
+fn write_mask_terms() -> Vec<(usize, F)> {
+    let mut terms: Vec<(usize, F)> = (0..=op::LOADIMM).map(|o| (flag(o), one())).collect();
+    terms.push((flag(op::LOAD), one()));
+    terms
 }
 
 const fn pre(k: usize) -> usize {
@@ -178,7 +198,7 @@ pub fn complete_step_r1cs() -> ShapedR1cs {
             vec![(dsel(k), one())],
         ));
     }
-    let wmask_terms: Vec<(usize, F)> = (0..=op::LOADIMM).map(|o| (flag(o), one())).collect();
+    let wmask_terms: Vec<(usize, F)> = write_mask_terms();
     rows.push((
         (0..REGISTERS).map(|k| (dsel(k), one())).collect(),
         vec![(Layout::ONE, one())],
@@ -230,6 +250,33 @@ pub fn complete_step_r1cs() -> ShapedR1cs {
         rows.push((vec![(flag(opcode), one())], rhs, vec![]));
     }
 
+    // --- Memory semantics (Load/Store). ---
+    // Load: rd ← mem[rs2].   flag_LOAD·(mem_value − rdv) = 0
+    rows.push((
+        vec![(flag(op::LOAD), one())],
+        vec![(Layout::MEM_VALUE, one()), (Layout::RDV, -one())],
+        vec![],
+    ));
+    // Store: mem[rs2] ← rs1.  flag_STORE·(rs1v − mem_value) = 0
+    rows.push((
+        vec![(flag(op::STORE), one())],
+        vec![(Layout::RS1V, one()), (Layout::MEM_VALUE, -one())],
+        vec![],
+    ));
+    // Both memory ops address mem[rs2]:
+    //   (flag_LOAD + flag_STORE)·(rs2v − mem_addr) = 0
+    rows.push((
+        vec![(flag(op::LOAD), one()), (flag(op::STORE), one())],
+        vec![(Layout::RS2V, one()), (Layout::MEM_ADDR, -one())],
+        vec![],
+    ));
+    // The memory write flag is exactly flag_STORE (boolean by the flag rows).
+    rows.push((
+        vec![(Layout::MEM_WRITE, one()), (flag(op::STORE), -one())],
+        vec![(Layout::ONE, one())],
+        vec![],
+    ));
+
     // --- Register-file update. For each register k:
     //   post[k] = dsel[k]·(written rdv) + (1 − dsel[k])·pre[k]
     // with "written" = (Σ writing flags). On a non-writing opcode the write
@@ -238,7 +285,7 @@ pub fn complete_step_r1cs() -> ShapedR1cs {
     //   post[k] − pre[k] = dsel[k]·(wmask·rdv − pre[k])
     // wmask·rdv is itself degree 2; precompute it once as `wrdv` via an aux
     // column, then the per-register row is dsel[k]·(wrdv − pre[k]).
-    let wmask: Vec<(usize, F)> = (0..=op::LOADIMM).map(|o| (flag(o), one())).collect();
+    let wmask: Vec<(usize, F)> = write_mask_terms();
     let wrdv = Layout::WRDV;
     rows.push((wmask, vec![(Layout::RDV, one())], vec![(wrdv, one())]));
     for k in 0..REGISTERS {
@@ -395,12 +442,15 @@ pub struct Decoded {
 }
 
 /// Builds a satisfying assignment for one complete step. `regs` is the
-/// pre-state; returns `(witness, post_regs, next_pc)`.
+/// pre-state; `mem_value` is the value loaded (for Load) or stored (for
+/// Store), ignored by other opcodes. Returns `(witness, post_regs,
+/// next_pc)`.
 #[must_use]
 pub fn assign_complete(
     d: Decoded,
     regs: &[F; REGISTERS],
     pc: usize,
+    mem_value: F,
 ) -> (DenseVector<F>, [F; REGISTERS], usize) {
     // Total width includes the aux columns used above.
     let width = Layout::COLUMNS;
@@ -432,9 +482,21 @@ pub fn assign_complete(
         op::NEG => -rs1v,
         op::MOV => rs1v,
         op::LOADIMM => d.imm,
+        op::LOAD => mem_value,
         _ => F::from(0),
     };
     z[Layout::RDV] = rdv;
+
+    // Memory access columns: address from rs2, value, and the write flag.
+    if d.opcode == op::LOAD || d.opcode == op::STORE {
+        z[Layout::MEM_ADDR] = rs2v;
+        z[Layout::MEM_VALUE] = if d.opcode == op::STORE {
+            rs1v
+        } else {
+            mem_value
+        };
+        z[Layout::MEM_WRITE] = F::from(u32::from(d.opcode == op::STORE));
+    }
 
     // Destination selector + write mask product.
     let writes = writes_register(d.opcode);
@@ -493,4 +555,44 @@ pub fn assign_complete(
     z[Layout::BRANCH_CORR] = branch_corr;
 
     (DenseVector::from(z), post, next_pc)
+}
+
+/// Offline memory-checking glue: extracts a step's memory operation and
+/// drives the multiset-equality argument that makes Load/Store *globally*
+/// consistent — every Load returns the value most recently Stored at its
+/// address. The per-step circuit enforces the local read/write semantics
+/// above; this enforces that reads agree with writes across the whole run,
+/// the standard offline memory-checking decomposition.
+pub mod memory {
+    use super::{Decoded, F, op};
+    pub use blacknet_arith::multiset::{MemoryOp, check, grand_product};
+    use blacknet_crypto::matrix::DenseVector;
+
+    /// The memory operation a step performs, if any, as an `(address,
+    /// timestamp, value)` tuple for the consistency multiset. `timestamp` is
+    /// the step index, giving a total order on accesses to each address.
+    #[must_use]
+    pub fn step_op(d: &Decoded, timestamp: usize, addr: F, value: F) -> Option<MemoryOp> {
+        if d.opcode == op::LOAD || d.opcode == op::STORE {
+            Some(MemoryOp {
+                address: addr,
+                timestamp: F::from(timestamp as u32),
+                value,
+            })
+        } else {
+            None
+        }
+    }
+
+    /// Reads the memory access columns from a step witness produced by
+    /// [`super::assign_complete`].
+    #[must_use]
+    pub fn access_of(z: &DenseVector<F>) -> (F, F, bool) {
+        use super::Layout;
+        (
+            z[Layout::MEM_ADDR],
+            z[Layout::MEM_VALUE],
+            z[Layout::MEM_WRITE] == F::from(1),
+        )
+    }
 }
