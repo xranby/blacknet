@@ -39,6 +39,7 @@
 //!
 //! A run is accepted only if all three hold.
 
+use crate::programbinding::committed::CommittedTable;
 use crate::programbinding::{bind_step, challenge, check_binding, program_table};
 use crate::universal_complete::memory::{MemoryOp, check as memory_check};
 use crate::universal_complete::{Decoded, REGISTERS, assign_complete, complete_step_r1cs, op};
@@ -200,6 +201,8 @@ pub fn run(program: &[Row], inputs: &[(usize, F)], fuel: usize) -> Result<RunPro
     let shape: ShapedR1cs = complete_step_r1cs();
     let alpha = run_challenge(program);
     let table = program_table(program, alpha);
+    let committed = CommittedTable::commit(program, alpha);
+    let root = committed.root();
 
     let mut regs = [F::from(0); REGISTERS];
     for &(k, v) in inputs {
@@ -240,9 +243,21 @@ pub fn run(program: &[Row], inputs: &[(usize, F)], fuel: usize) -> Result<RunPro
             steps_valid = false;
         }
 
-        // Program binding: this step must be program[pc].
+        // Program binding: this step must be program[pc]. Checked two ways —
+        // the public-table selector (folds in-circuit) and, as the bound
+        // form, Merkle inclusion against the committed root, which the
+        // verifier can check holding only the constant-size root. Honest
+        // runs satisfy both; they must agree.
         let binding = bind_step(&d, pc, program.len(), alpha);
-        if !check_binding(&binding, &table, pc) {
+        let public_ok = check_binding(&binding, &table, pc);
+        let committed_ok = crate::programbinding::committed::check_step(
+            &root,
+            pc,
+            &d,
+            alpha,
+            &committed.prove(pc),
+        );
+        if !(public_ok && committed_ok) {
             program_bound = false;
         }
 

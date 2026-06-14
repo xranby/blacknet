@@ -204,3 +204,105 @@ const fn mk(opcode: usize, rd: u8, rs1: u8, rs2: u8, imm: F, target: usize) -> D
 
 #[allow(dead_code)]
 const _REG_GUARD: () = assert!(REGISTERS <= 256);
+
+/// A program table committed as a Merkle root, the soundness upgrade over a
+/// public table the verifier rebuilds.
+///
+/// In the public-table form, the verifier holds all of `T` and checks the
+/// step's fingerprint against `T[pc]` by a one-hot selector — which means it
+/// must possess and trust the whole table. Committing `T` as a Merkle root
+/// instead lets the verifier hold only the constant-size root: each step
+/// proves its instruction is `T[pc]` by supplying an inclusion branch, and
+/// the verifier recomputes the root from the leaf and branch. The table is
+/// now *bound* — a prover cannot substitute a different table without
+/// changing the root, which is fixed by the deployed program. This is the
+/// standard memory-checking-by-commitment upgrade, reusing the tree
+/// (`MerkleTree` over `JivePoseidon2Pervushin`) already in the crypto crate.
+pub mod committed {
+    use super::{Decoded, F, fields, fingerprint};
+    use blacknet_crypto::symmetric::{JivePoseidon2Pervushin, MerkleTree};
+
+    /// The Merkle hash type: a Jive digest of four Pervushin elements.
+    pub type Leaf = [F; 4];
+    /// A Merkle inclusion branch (sibling hashes root-ward).
+    pub type Branch = Vec<Leaf>;
+    type Tree = MerkleTree<JivePoseidon2Pervushin>;
+
+    /// The leaf for program entry `pc`: the fingerprint placed in the first
+    /// slot of the Jive hash word, the rest zero. Distinct fingerprints give
+    /// distinct leaves, so leaf equality is fingerprint equality.
+    #[must_use]
+    pub fn leaf_of(d: &Decoded, alpha: F) -> Leaf {
+        [fingerprint(d, alpha), F::from(0), F::from(0), F::from(0)]
+    }
+
+    /// A program table committed as a Merkle root over its per-pc leaves.
+    pub struct CommittedTable {
+        tree: Tree,
+        len: usize,
+    }
+
+    impl CommittedTable {
+        /// Commits a decoded program at challenge `alpha`.
+        #[must_use]
+        pub fn commit(program: &[Decoded], alpha: F) -> Self {
+            let leaves: Vec<Leaf> = program.iter().map(|d| leaf_of(d, alpha)).collect();
+            Self {
+                tree: Tree::new(&leaves),
+                len: program.len(),
+            }
+        }
+
+        /// The constant-size commitment the verifier holds.
+        #[must_use]
+        pub fn root(&self) -> Leaf {
+            *self.tree.root()
+        }
+
+        #[must_use]
+        pub fn len(&self) -> usize {
+            self.len
+        }
+
+        #[must_use]
+        pub fn is_empty(&self) -> bool {
+            self.len == 0
+        }
+
+        /// The inclusion branch proving the entry at `pc`.
+        #[must_use]
+        pub fn prove(&self, pc: usize) -> Branch {
+            self.tree.branch(pc)
+        }
+    }
+
+    /// Verifies that `leaf` is the committed entry at index `pc` under
+    /// `root`, by recomputing the root from the supplied branch. This is
+    /// what a step does in place of scanning a public table: it shows its
+    /// own instruction's leaf is `T[pc]` against the constant-size root.
+    #[must_use]
+    pub fn verify(root: &Leaf, pc: usize, leaf: Leaf, branch: &Branch) -> bool {
+        &Tree::compute_root(pc, leaf, branch) == root
+    }
+
+    /// End-to-end step check against a committed table: the step's decoded
+    /// instruction, fingerprinted, must be the committed `T[pc]`.
+    #[must_use]
+    pub fn check_step(
+        root: &Leaf,
+        pc: usize,
+        decoded: &Decoded,
+        alpha: F,
+        branch: &Branch,
+    ) -> bool {
+        verify(root, pc, leaf_of(decoded, alpha), branch)
+    }
+
+    /// Guard: the leaf packs exactly the fields the fingerprint consumes.
+    #[allow(dead_code)]
+    const _FIELDS_FIT: () = assert!(super::FIELDS <= 6);
+    #[allow(dead_code)]
+    fn _fields_reachable(d: &Decoded) -> [F; super::FIELDS] {
+        fields(d)
+    }
+}
