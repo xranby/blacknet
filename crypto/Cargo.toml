@@ -263,3 +263,7 @@ harness = false
 name = "sumcheck"
 path = "src/benchmark/rust/sumcheck.rs"
 harness = false
+
+[[test]]
+name = "usecase_blacklemon"
+path = "src/test/rust/usecase_blacklemon.rs"
