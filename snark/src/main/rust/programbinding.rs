@@ -306,3 +306,185 @@ pub mod committed {
         fields(d)
     }
 }
+
+/// In-circuit Merkle-path verification: the fold itself enforces that the
+/// step's instruction is the committed `T[pc]`.
+///
+/// The committed-table check ([`committed`]) is sound but currently verified
+/// by the driver. This module arithmetizes the same `compute_root` walk as a
+/// constraint system, so the inclusion proof folds with every other per-step
+/// check rather than being trusted alongside the fold. It is the in-circuit
+/// counterpart of [`committed::verify`], built from the circuit/assigner Jive
+/// pair (`JivePoseidon2Pervushin`, RANK 4) already in the crypto crate — the
+/// last pre-positioned piece this binding needed.
+///
+/// At each level the index bit `b` (witnessed boolean) selects the hashing
+/// order, exactly as `MerkleTree::compute_root` does with `i & 1`:
+///   parent = b·compress(sibling, hash) + (1−b)·compress(hash, sibling),
+/// which stays degree 2 (a boolean times a compression output). After
+/// `depth` levels the accumulated hash is constrained equal to the public
+/// root. A separate constraint ties the bits to the public `pc`
+/// (`Σ bitⱼ·2ʲ = pc`), so the path proven is the one at the claimed index.
+pub mod merkle_circuit {
+    use super::F;
+    use blacknet_crypto::algebra::IntegerRing;
+    use blacknet_crypto::circuit::builder::{CircuitBuilder, Constant, LinearCombination};
+    use blacknet_crypto::circuit::symmetric::{CompressionFunction, JivePoseidon2Pervushin};
+    use blacknet_crypto::customizableconstraintsystem::CustomizableConstraintSystem;
+    use blacknet_crypto::r1cs::R1CS;
+
+    /// Jive hash rank (a 4-element Pervushin word).
+    pub const RANK: usize = 4;
+
+    /// Builds the Merkle-inclusion circuit for a tree of the given `depth`
+    /// (number of branch levels), as an `R1CS` that folds like the step
+    /// circuit. Public inputs, in allocation order: the leaf (RANK), the
+    /// root (RANK), and `pc`. Witness: the `depth` index bits and the
+    /// `depth` sibling hashes (RANK each).
+    #[must_use]
+    pub fn inclusion_r1cs(depth: usize) -> R1CS<F> {
+        build_inclusion(depth).r1cs()
+    }
+
+    /// The same relation as a CCS, for assignment-based satisfaction checks
+    /// (its `assigment()` seeds the constant column and the allocation
+    /// order the assigner mirrors).
+    #[must_use]
+    pub fn inclusion_ccs(depth: usize) -> CustomizableConstraintSystem<F> {
+        build_inclusion(depth).ccs()
+    }
+
+    fn build_inclusion(depth: usize) -> CircuitBuilder<'static, F> {
+        let circuit = CircuitBuilder::<F>::new(2);
+        {
+            let scope = circuit.scope("merkle_inclusion");
+            let jive = JivePoseidon2Pervushin::new(&circuit);
+            let pow = |i: usize| Constant::new(<F as IntegerRing>::new(1i64 << i));
+
+            // Public: leaf, root, pc.
+            let leaf: [LinearCombination<F>; RANK] =
+                core::array::from_fn(|_| scope.public_input().into());
+            let root: [LinearCombination<F>; RANK] =
+                core::array::from_fn(|_| scope.public_input().into());
+            let pc: LinearCombination<F> = scope.public_input().into();
+
+            // Walk the path, selecting order by each level's index bit.
+            let mut hash = leaf;
+            let mut index_acc = LinearCombination::<F>::default();
+            for level in 0..depth {
+                // bit ∈ {0,1}: boolean constraint bit·bit = bit.
+                let bit: LinearCombination<F> = scope.auxiliary().into();
+                scope.constrain(bit.clone() * bit.clone(), bit.clone());
+
+                // sibling hash (RANK auxiliaries).
+                let sibling: [LinearCombination<F>; RANK] =
+                    core::array::from_fn(|_| scope.auxiliary().into());
+
+                // Two candidate parents.
+                let left = jive.compress(&sibling, &hash); // bit == 1
+                let right = jive.compress(&hash, &sibling); // bit == 0
+
+                // parent = bit·left + (1−bit)·right, per coordinate. Each
+                // product bit·(left−right) is degree 2; introduce it as an
+                // auxiliary and add to `right`.
+                let mut parent: [LinearCombination<F>; RANK] =
+                    core::array::from_fn(|_| LinearCombination::new());
+                for k in 0..RANK {
+                    let sel = scope.auxiliary(); // sel = bit·(left−right)
+                    scope.constrain(bit.clone() * (left[k].clone() - right[k].clone()), sel);
+                    parent[k] = right[k].clone() + LinearCombination::from(sel);
+                }
+                hash = parent;
+
+                index_acc = index_acc + bit * pow(level);
+            }
+
+            // The accumulated hash equals the committed root.
+            for k in 0..RANK {
+                scope.constrain(hash[k].clone(), root[k].clone());
+            }
+            // The index bits reconstruct pc.
+            scope.constrain(index_acc, pc);
+        }
+        circuit
+    }
+
+    /// The number of branch levels for a program of `len` leaves.
+    #[must_use]
+    pub fn depth_for(len: usize) -> usize {
+        if len <= 1 {
+            0
+        } else {
+            (usize::BITS - (len - 1).leading_zeros()) as usize
+        }
+    }
+
+    /// Assigner mirror: fills a satisfying assignment for the inclusion
+    /// circuit into the CCS's own `Assigment` (which seeds the constant
+    /// column), mirroring the circuit's allocation order exactly — public
+    /// (leaf, root, pc), then per level (bit, siblings, the two Jive
+    /// compressions whose permutation auxiliaries the assigner Jive fills,
+    /// and the RANK selector products).
+    pub mod assigner {
+        use super::super::F;
+        use super::{RANK, inclusion_ccs};
+        use blacknet_crypto::assigner::symmetric::{CompressionFunction, JivePoseidon2Pervushin};
+        use blacknet_crypto::constraintsystem::ConstraintSystem;
+        use blacknet_crypto::matrix::DenseVector;
+
+        /// Builds the satisfying assignment for proving `leaf` at index `pc`
+        /// under `root` with the given `branch` (sibling hashes, leaf-ward
+        /// first). Returns the full witness vector in the circuit's column
+        /// order; `is_satisfied` on `inclusion_ccs(depth)` accepts it iff the
+        /// path is genuine.
+        #[must_use]
+        pub fn assign(
+            leaf: [F; RANK],
+            root: [F; RANK],
+            pc: usize,
+            branch: &[[F; RANK]],
+        ) -> DenseVector<F> {
+            let ccs = inclusion_ccs(branch.len());
+            let z = ccs.assigment();
+            // Public inputs, in allocation order.
+            z.extend(leaf.iter().copied());
+            z.extend(root.iter().copied());
+            z.push(F::from(pc as u32));
+
+            let jive = JivePoseidon2Pervushin::new(&z);
+            let mut hash = leaf;
+            let mut i = pc;
+            for sibling in branch {
+                let bit = i & 1;
+                z.push(F::from(bit as u32)); // index bit
+                z.extend(sibling.iter().copied()); // sibling hash
+
+                // Both compressions, in the circuit's order (each fills the
+                // permutation auxiliaries via the assigner Jive).
+                let left = jive.compress(*sibling, hash);
+                let right = jive.compress(hash, *sibling);
+                let mut parent = [F::from(0); RANK];
+                for k in 0..RANK {
+                    let sel = if bit == 1 {
+                        left[k] - right[k]
+                    } else {
+                        F::from(0)
+                    };
+                    z.push(sel);
+                    parent[k] = right[k] + sel;
+                }
+                hash = parent;
+                i >>= 1;
+            }
+            z.finish()
+        }
+
+        /// Whether the inclusion circuit accepts this path.
+        #[must_use]
+        pub fn verifies(leaf: [F; RANK], root: [F; RANK], pc: usize, branch: &[[F; RANK]]) -> bool {
+            let depth = branch.len();
+            let z = assign(leaf, root, pc, branch);
+            inclusion_ccs(depth).is_satisfied(&z).is_ok()
+        }
+    }
+}

@@ -123,3 +123,7 @@ path = "src/test/rust/compose_blacklemon_zkvm.rs"
 [[test]]
 name = "programbinding_committed"
 path = "src/test/rust/programbinding_committed.rs"
+
+[[test]]
+name = "merkle_circuit"
+path = "src/test/rust/merkle_circuit.rs"
