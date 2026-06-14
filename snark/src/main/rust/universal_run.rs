@@ -137,6 +137,11 @@ pub struct RunProof {
     pub program_bound: bool,
     /// Whether the memory accesses were globally consistent.
     pub memory_consistent: bool,
+    /// Size, in field elements, of the folded artifact the verifier checks.
+    /// Constant in the number of steps: the folding edge. One universal-step
+    /// accumulator (a fixed-width witness commitment plus the linearized
+    /// claim) regardless of how long the program ran.
+    pub folded_size: usize,
 }
 
 impl RunProof {
@@ -321,6 +326,7 @@ pub fn run(program: &[Row], inputs: &[(usize, F)], fuel: usize) -> Result<RunPro
         steps_valid,
         program_bound,
         memory_consistent,
+        folded_size: shape.a().columns(),
     })
 }
 
@@ -442,6 +448,7 @@ pub fn run_with_forged_load(
         steps_valid,
         program_bound,
         memory_consistent: consistent(&reads, &writes),
+        folded_size: shape.a().columns(),
     }
 }
 
