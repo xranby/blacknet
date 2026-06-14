@@ -111,3 +111,7 @@ path = "src/test/rust/universal_run.rs"
 [[test]]
 name = "differentiators"
 path = "src/test/rust/differentiators.rs"
+
+[[test]]
+name = "usecases_zkfi"
+path = "src/test/rust/usecases_zkfi.rs"
