@@ -136,6 +136,10 @@ impl TxData for Batch {
                     let data = from_bytes::<Batch>(data_bytes, false)?;
                     data.process_impl(tx, hash, (index + 1) as u32, coin_tx)?;
                 }
+                TxKind::VerifiedComputation => {
+                    let data = from_bytes::<VerifiedComputation>(data_bytes, false)?;
+                    data.process_impl(tx, hash, (index + 1) as u32, coin_tx)?;
+                }
                 TxKind::Generated => {
                     return Err(Error::Invalid("Generated as individual tx".to_owned()));
                 }

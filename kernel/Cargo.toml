@@ -84,3 +84,7 @@ harness = false
 [[test]]
 name = "verifiedcomputation"
 path = "src/test/rust/verifiedcomputation.rs"
+
+[[test]]
+name = "verifiedcomputationtx"
+path = "src/test/rust/verifiedcomputationtx.rs"

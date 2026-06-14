@@ -96,6 +96,10 @@ pub trait CoinTx: Sized {
                 let data = from_bytes::<Batch>(tx.data_bytes(), false)?;
                 data.process(tx, hash, self)
             }
+            TxKind::VerifiedComputation => {
+                let data = from_bytes::<VerifiedComputation>(tx.data_bytes(), false)?;
+                data.process(tx, hash, self)
+            }
             TxKind::Generated => Err(Error::Invalid("Generated as individual tx".to_owned())),
         }
     }

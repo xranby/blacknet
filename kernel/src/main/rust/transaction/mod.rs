@@ -31,6 +31,7 @@ mod transaction;
 mod transfer;
 mod txdata;
 mod txkind;
+mod verifiedcomputationtx;
 mod withdrawfromlease;
 
 pub use batch::*;
@@ -49,4 +50,5 @@ pub use transaction::*;
 pub use transfer::*;
 pub use txdata::*;
 pub use txkind::*;
+pub use verifiedcomputationtx::*;
 pub use withdrawfromlease::*;

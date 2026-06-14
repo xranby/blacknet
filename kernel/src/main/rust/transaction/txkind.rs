@@ -33,6 +33,7 @@ pub enum TxKind {
     ClaimHTLC = 12,
     // Dispel = 13,
     Batch = 16,
+    VerifiedComputation = 17,
     // Genesis = 125,
     Generated = 254,
 }

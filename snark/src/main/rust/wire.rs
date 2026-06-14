@@ -210,3 +210,152 @@ impl<'a> Reader<'a> {
         }
     }
 }
+
+/// Canonical encoding of a full verified-computation payload: the program,
+/// its public IO, and the proof, as one self-describing byte string. This is
+/// what a `VerifiedComputation` transaction carries on-chain; decoding
+/// reconstructs exactly the arguments `proof::verify` consumes, so the
+/// on-chain verifier needs nothing beyond these bytes (the program is
+/// inline, and `verify` re-derives its commitment).
+use crate::proof::{Proof, PublicIO};
+use blacknet_vm::machine::Instruction;
+
+/// Opcode tags for instruction encoding (stable on the wire).
+mod opcode {
+    pub const ADD: u8 = 0;
+    pub const SUB: u8 = 1;
+    pub const MUL: u8 = 2;
+    pub const NEG: u8 = 3;
+    pub const LOADIMM: u8 = 4;
+    pub const MOV: u8 = 5;
+    pub const BEQ: u8 = 6;
+    pub const BNE: u8 = 7;
+    pub const JUMP: u8 = 8;
+    pub const HALT: u8 = 9;
+}
+
+impl Writer {
+    fn instruction(&mut self, i: &Instruction<F>) {
+        match *i {
+            Instruction::Add(d, a, b) => {
+                self.buf.push(opcode::ADD);
+                self.buf.extend_from_slice(&[d, a, b]);
+            }
+            Instruction::Sub(d, a, b) => {
+                self.buf.push(opcode::SUB);
+                self.buf.extend_from_slice(&[d, a, b]);
+            }
+            Instruction::Mul(d, a, b) => {
+                self.buf.push(opcode::MUL);
+                self.buf.extend_from_slice(&[d, a, b]);
+            }
+            Instruction::Neg(d, a) => {
+                self.buf.push(opcode::NEG);
+                self.buf.extend_from_slice(&[d, a]);
+            }
+            Instruction::LoadImm(d, imm) => {
+                self.buf.push(opcode::LOADIMM);
+                self.buf.push(d);
+                self.field(imm);
+            }
+            Instruction::Mov(d, a) => {
+                self.buf.push(opcode::MOV);
+                self.buf.extend_from_slice(&[d, a]);
+            }
+            Instruction::Beq(a, b, t) => {
+                self.buf.push(opcode::BEQ);
+                self.buf.extend_from_slice(&[a, b]);
+                self.u64(t as u64);
+            }
+            Instruction::Bne(a, b, t) => {
+                self.buf.push(opcode::BNE);
+                self.buf.extend_from_slice(&[a, b]);
+                self.u64(t as u64);
+            }
+            Instruction::Jump(t) => {
+                self.buf.push(opcode::JUMP);
+                self.u64(t as u64);
+            }
+            Instruction::Halt => self.buf.push(opcode::HALT),
+        }
+    }
+}
+
+impl Reader<'_> {
+    fn instruction(&mut self) -> Result<Instruction<F>, Error> {
+        let tag = self.byte()?;
+        let reg = |r: &mut Self| r.byte();
+        Ok(match tag {
+            opcode::ADD => Instruction::Add(reg(self)?, reg(self)?, reg(self)?),
+            opcode::SUB => Instruction::Sub(reg(self)?, reg(self)?, reg(self)?),
+            opcode::MUL => Instruction::Mul(reg(self)?, reg(self)?, reg(self)?),
+            opcode::NEG => Instruction::Neg(reg(self)?, reg(self)?),
+            opcode::LOADIMM => {
+                let d = reg(self)?;
+                Instruction::LoadImm(d, self.field()?)
+            }
+            opcode::MOV => Instruction::Mov(reg(self)?, reg(self)?),
+            opcode::BEQ => {
+                let (a, b) = (reg(self)?, reg(self)?);
+                Instruction::Beq(a, b, self.u64()? as usize)
+            }
+            opcode::BNE => {
+                let (a, b) = (reg(self)?, reg(self)?);
+                Instruction::Bne(a, b, self.u64()? as usize)
+            }
+            opcode::JUMP => Instruction::Jump(self.u64()? as usize),
+            opcode::HALT => Instruction::Halt,
+            _ => return Err(Error::BadVersion(tag)),
+        })
+    }
+}
+
+/// Encodes `(program, io, proof)` as one canonical, versioned byte string.
+#[must_use]
+pub fn encode_compute(program: &[Instruction<F>], io: &PublicIO, proof: &Proof) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.version(WIRE_VERSION);
+    // Program.
+    w.u32(program.len() as u32);
+    for i in program {
+        w.instruction(i);
+    }
+    // Public IO.
+    w.field_slice(&io.inputs);
+    w.field_slice(&io.outputs);
+    // Proof (its own version byte, then body).
+    w.version(proof.version);
+    w.u32_slice(&proof.pc_trace);
+    w.field_slice(&proof.witness);
+    w.finish()
+}
+
+/// Decodes a verified-computation payload, rejecting malformed, non-canonical
+/// or trailing input. Returns exactly the `verify` arguments.
+pub fn decode_compute(bytes: &[u8]) -> Result<(Vec<Instruction<F>>, PublicIO, Proof), Error> {
+    let mut r = Reader::new(bytes);
+    r.version(WIRE_VERSION)?;
+    let plen = r.u32()? as usize;
+    if plen > (MAX_LEN as usize) {
+        return Err(Error::Overlong);
+    }
+    let mut program = Vec::with_capacity(plen);
+    for _ in 0..plen {
+        program.push(r.instruction()?);
+    }
+    let inputs = r.field_slice()?;
+    let outputs = r.field_slice()?;
+    let proof_version = r.byte()?;
+    let pc_trace = r.u32_slice()?;
+    let witness = r.field_slice()?;
+    r.finish()?;
+    Ok((
+        program,
+        PublicIO { inputs, outputs },
+        Proof {
+            version: proof_version,
+            pc_trace,
+            witness,
+        },
+    ))
+}
