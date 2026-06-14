@@ -260,12 +260,12 @@ pub mod committed {
         }
 
         #[must_use]
-        pub fn len(&self) -> usize {
+        pub const fn len(&self) -> usize {
             self.len
         }
 
         #[must_use]
-        pub fn is_empty(&self) -> bool {
+        pub const fn is_empty(&self) -> bool {
             self.len == 0
         }
 
@@ -396,7 +396,7 @@ pub mod merkle_circuit {
                 }
                 hash = parent;
 
-                index_acc = index_acc + bit * pow(level);
+                index_acc += bit * pow(level);
             }
 
             // The accumulated hash equals the committed root.
@@ -411,7 +411,7 @@ pub mod merkle_circuit {
 
     /// The number of branch levels for a program of `len` leaves.
     #[must_use]
-    pub fn depth_for(len: usize) -> usize {
+    pub const fn depth_for(len: usize) -> usize {
         if len <= 1 {
             0
         } else {

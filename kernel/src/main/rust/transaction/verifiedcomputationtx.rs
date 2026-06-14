@@ -41,7 +41,7 @@
 use crate::blake2b::Hash;
 use crate::error::{Error, Result};
 use crate::transaction::{CoinTx, Transaction, TxData};
-use crate::verifiedcomputation::{ACTIVATION_HEIGHT, accepted_wire_versions, params};
+use crate::verifiedcomputation::{ACTIVATION_HEIGHT, accepted_wire_versions, compute_fee, params};
 use alloc::boxed::Box;
 use alloc::format;
 use blacknet_snark::commitment::commit;
@@ -71,18 +71,38 @@ impl VerifiedComputation {
 impl TxData for VerifiedComputation {
     fn process_impl(
         &self,
-        _tx: &Transaction,
+        tx: &Transaction,
         _hash: Hash,
         _data_index: u32,
         coin_tx: &mut impl CoinTx,
     ) -> Result<()> {
         let height = u64::from(coin_tx.height());
 
-        // Consensus gate: not active yet.
+        // Consensus gate: not active yet. (Cheapest check first.)
         if height < ACTIVATION_HEIGHT {
             return Err(Error::Invalid(
                 "verified computation not active at this height".into(),
             ));
+        }
+
+        // DoS / economic soundness: the fee must cover the cost this
+        // transaction imposes on every validating node — a fixed verification
+        // charge plus a per-byte charge over the payload. Checked BEFORE the
+        // expensive decode-and-verify, and against the payload length so the
+        // bound is a pure function of the bytes already in hand. Without this
+        // an attacker floods minimal-fee transactions that each force every
+        // node to run the verifier for free. A payload over the consensus
+        // size cap is rejected outright (it could never pay a sane fee and
+        // bounds the work before allocation).
+        if self.payload.len() > params::MAX_PAYLOAD_BYTES {
+            return Err(Error::Invalid("payload exceeds size cap".into()));
+        }
+        let required = compute_fee(self.payload.len());
+        if tx.fee().value() < required {
+            return Err(Error::Invalid(format!(
+                "fee {} below verification cost {required}",
+                tx.fee().value()
+            )));
         }
 
         // Pin the wire version: the first byte of the canonical payload.
@@ -103,7 +123,10 @@ impl TxData for VerifiedComputation {
         }
 
         // Verify: re-derives the program commitment from the inline program
-        // and checks the folded proof against it. Never executes the program.
+        // and checks the folded proof against it. Deterministic (Fiat–Shamir
+        // challenges are squeezed from the transcript), so every node reaches
+        // the same accept/reject decision — a consensus requirement. Never
+        // executes the program.
         let program_id = commit(&program);
         verify(&program_id, &program, &io, &proof, params::MAX_STEPS)
             .map_err(|e| Error::Invalid(format!("proof rejected: {e:?}")))?;

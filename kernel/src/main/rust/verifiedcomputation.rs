@@ -46,6 +46,11 @@ pub mod params {
     pub const VERIFY_FEE: u64 = 10_000;
     /// Fee per proof byte, in minimum units.
     pub const BYTE_FEE: u64 = 10;
+    /// Hard cap on a verified-computation payload, bounding per-transaction
+    /// validation work before any allocation or verification. Generous
+    /// relative to a real proof, but finite so the fee floor and decode
+    /// cost are bounded.
+    pub const MAX_PAYLOAD_BYTES: usize = 1 << 24;
 }
 
 #[derive(Clone, Debug)]

@@ -31,7 +31,7 @@ use blacknet_kernel::transaction::{
     CoinTx, HashTimeLockContractId, MultiSignatureLockContractId, Transaction, TxData, TxKind,
     VerifiedComputation,
 };
-use blacknet_kernel::verifiedcomputation::ACTIVATION_HEIGHT;
+use blacknet_kernel::verifiedcomputation::{ACTIVATION_HEIGHT, compute_fee};
 use blacknet_snark::proof::prove;
 use blacknet_snark::wire::encode_compute;
 use blacknet_snark::witnesscommitment::F;
@@ -105,13 +105,18 @@ fn payload(program: &[Instruction<F>], input: i32) -> Vec<u8> {
 }
 
 fn run_at_height(payload: Vec<u8>, height: u32) -> blacknet_kernel::error::Result<()> {
+    let fee = compute_fee(payload.len()); // pay exactly the required floor
+    run_with_fee(payload, height, fee)
+}
+
+fn run_with_fee(payload: Vec<u8>, height: u32, fee: u64) -> blacknet_kernel::error::Result<()> {
     let data = VerifiedComputation::new(payload.into_boxed_slice());
     let mut state = HeightOnly { height };
     let tx = Transaction::new(
         PublicKey::default(),
         0,
         Hash::default(),
-        Amt::default(),
+        Amt::new(fee),
         TxKind::VerifiedComputation,
         Default::default(),
     );
@@ -180,4 +185,49 @@ fn roundtrip_payload_decodes() {
     assert_eq!(dp, program);
     assert_eq!(dio, io);
     assert_eq!(dproof, proof);
+}
+
+#[test]
+fn insufficient_fee_rejected() {
+    // A fee below the verification cost must be rejected BEFORE the expensive
+    // verify - the DoS/economic-soundness guard.
+    let p = payload(&square_add(), 6);
+    let too_low = compute_fee(p.len()) - 1;
+    assert!(run_with_fee(p, ACTIVATION_HEIGHT as u32, too_low).is_err());
+}
+
+#[test]
+fn exact_fee_accepted() {
+    let p = payload(&square_add(), 6);
+    let exact = compute_fee(p.len());
+    assert!(run_with_fee(p, ACTIVATION_HEIGHT as u32, exact).is_ok());
+}
+
+#[test]
+fn fee_scales_with_payload() {
+    // The required fee grows with payload size, so a larger proof costs more
+    // to submit - the per-byte charge that prices verification work.
+    let small = payload(&square_add(), 6);
+    let big_program = {
+        let mut v = vec![Instruction::LoadImm(1, f(1))];
+        for _ in 0..50 {
+            v.push(Instruction::Add(1, 1, 1));
+        }
+        v.push(Instruction::Halt);
+        v
+    };
+    let big = payload(&big_program, 1);
+    assert!(compute_fee(big.len()) > compute_fee(small.len()));
+}
+
+#[test]
+fn verification_is_deterministic() {
+    // Every validating node must reach the same decision. Verifying the same
+    // payload twice yields the same result - Fiat-Shamir makes verification a
+    // pure function of the bytes, a consensus requirement.
+    let p = payload(&square_add(), 6);
+    let a = run_at_height(p.clone(), ACTIVATION_HEIGHT as u32);
+    let b = run_at_height(p, ACTIVATION_HEIGHT as u32);
+    assert_eq!(a.is_ok(), b.is_ok());
+    assert!(a.is_ok());
 }
