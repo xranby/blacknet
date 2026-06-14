@@ -89,3 +89,7 @@ path = "src/test/rust/layout_benchmark.rs"
 [[test]]
 name = "wire"
 path = "src/test/rust/wire.rs"
+
+[[test]]
+name = "universal"
+path = "src/test/rust/universal.rs"

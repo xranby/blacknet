@@ -31,6 +31,7 @@ pub mod proof;
 pub mod recursion;
 pub mod recursive;
 pub mod unifiedcommitment;
+pub mod universal;
 pub mod wire;
 pub mod witnesscommitment;
 pub mod zk;
