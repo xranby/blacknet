@@ -19,7 +19,9 @@ use blacknet_crypto::bigint::UInt256;
 use blacknet_kernel::amount::Amount;
 use blacknet_kernel::blake2b::Hash;
 use blacknet_kernel::ed25519::PublicKey;
-use blacknet_kernel::transaction::{HashTimeLockContractId, MultiSignatureLockContractId};
+use blacknet_kernel::transaction::{
+    HashTimeLockContractId, MultiSignatureLockContractId, ProgramId,
+};
 use blacknet_time::Seconds;
 use serde::{Deserialize, Serialize};
 
@@ -36,6 +38,7 @@ pub struct UndoBlock {
     accounts: Vec<(PublicKey, Option<Box<[u8]>>)>,
     htlcs: Vec<(HashTimeLockContractId, Option<Box<[u8]>>)>,
     multisigs: Vec<(MultiSignatureLockContractId, Option<Box<[u8]>>)>,
+    programs: Vec<(ProgramId, Option<Box<[u8]>>)>,
     fork_v2: u16,
     blobs: Vec<(Box<[u8]>, Option<Box<[u8]>>)>,
 }
@@ -64,6 +67,7 @@ impl UndoBlock {
             accounts: Vec::new(),
             htlcs: Vec::new(),
             multisigs: Vec::new(),
+            programs: Vec::new(),
             fork_v2,
             blobs: Vec::new(),
         }
@@ -75,6 +79,10 @@ impl UndoBlock {
 
     pub fn add_htlc(&mut self, id: HashTimeLockContractId, htlc: Option<Box<[u8]>>) {
         self.htlcs.push((id, htlc));
+    }
+
+    pub fn add_program(&mut self, id: ProgramId, code: Option<Box<[u8]>>) {
+        self.programs.push((id, code));
     }
 
     pub fn add_multisig(&mut self, id: MultiSignatureLockContractId, multisig: Option<Box<[u8]>>) {

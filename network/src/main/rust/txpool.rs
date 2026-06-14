@@ -25,7 +25,7 @@ use blacknet_kernel::error::{Error, Result};
 use blacknet_kernel::htlc::HTLC;
 use blacknet_kernel::multisig::Multisig;
 use blacknet_kernel::transaction::{
-    CoinTx, HashTimeLockContractId, MultiSignatureLockContractId, Transaction,
+    CoinTx, HashTimeLockContractId, MultiSignatureLockContractId, ProgramId, Transaction,
 };
 use blacknet_log::{Error as LogError, LogManager, Logger, debug, warn};
 use blacknet_serialization::format::from_bytes;
@@ -42,6 +42,7 @@ pub struct TxPool {
     accounts: HashMap<PublicKey, Account>,
     htlcs: HashMap<HashTimeLockContractId, Option<HTLC>>,
     multisigs: HashMap<MultiSignatureLockContractId, Option<Multisig>>,
+    programs: HashMap<ProgramId, Option<Box<[u8]>>>,
     transactions: Vec<Hash>,
     undo_accounts: HashMap<PublicKey, Option<Account>>,
     undo_htlcs: HashMap<HashTimeLockContractId, (bool, Option<HTLC>)>,
@@ -64,6 +65,7 @@ impl TxPool {
             accounts: HashMap::new(),
             htlcs: HashMap::new(),
             multisigs: HashMap::new(),
+            programs: HashMap::new(),
             transactions: Vec::new(),
             undo_accounts: HashMap::new(),
             undo_htlcs: HashMap::new(),
@@ -285,5 +287,27 @@ impl CoinTx for TxPool {
 
     fn remove_multisig(&mut self, id: MultiSignatureLockContractId) {
         self.multisigs.insert(id, None);
+    }
+
+    fn add_program(&mut self, id: ProgramId, code: Box<[u8]>) {
+        self.programs.insert(id, Some(code));
+    }
+
+    fn has_program(&mut self, id: ProgramId) -> bool {
+        match self.programs.get(&id) {
+            Some(slot) => slot.is_some(),
+            None => self.coin_db.program(id).is_some(),
+        }
+    }
+
+    fn get_program(&mut self, id: ProgramId) -> Result<Box<[u8]>> {
+        match self.programs.get(&id) {
+            Some(Some(code)) => Ok(code.clone()),
+            Some(None) => Err(Error::Invalid("Program not found".to_owned())),
+            None => self
+                .coin_db
+                .program(id)
+                .ok_or(Error::Invalid("Program not found".to_owned())),
+        }
     }
 }

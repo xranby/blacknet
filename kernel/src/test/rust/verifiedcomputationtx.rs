@@ -20,6 +20,8 @@
 //! deployable — a real proof, encoded as the on-chain payload, accepted (or
 //! rejected) by the same `process_impl` a block would run.
 
+extern crate alloc;
+
 use blacknet_kernel::account::Account;
 use blacknet_kernel::amount::Amount;
 use blacknet_kernel::amount::Amount as Amt;
@@ -55,6 +57,7 @@ fn square_add() -> Vec<Instruction<F>> {
 /// unreachable on this path and panic if called.
 struct HeightOnly {
     height: u32,
+    programs: alloc::collections::BTreeMap<[u8; 32], alloc::boxed::Box<[u8]>>,
 }
 
 impl CoinTx for HeightOnly {
@@ -97,6 +100,25 @@ impl CoinTx for HeightOnly {
         unreachable!()
     }
     fn remove_multisig(&mut self, _: MultiSignatureLockContractId) {}
+    fn add_program(
+        &mut self,
+        id: blacknet_kernel::transaction::ProgramId,
+        code: alloc::boxed::Box<[u8]>,
+    ) {
+        self.programs.insert(id, code);
+    }
+    fn has_program(&mut self, id: blacknet_kernel::transaction::ProgramId) -> bool {
+        self.programs.contains_key(&id)
+    }
+    fn get_program(
+        &mut self,
+        id: blacknet_kernel::transaction::ProgramId,
+    ) -> blacknet_kernel::error::Result<alloc::boxed::Box<[u8]>> {
+        self.programs
+            .get(&id)
+            .cloned()
+            .ok_or_else(|| blacknet_kernel::error::Error::Invalid("unknown program".into()))
+    }
 }
 
 fn payload(program: &[Instruction<F>], input: i32) -> Vec<u8> {
@@ -111,7 +133,10 @@ fn run_at_height(payload: Vec<u8>, height: u32) -> blacknet_kernel::error::Resul
 
 fn run_with_fee(payload: Vec<u8>, height: u32, fee: u64) -> blacknet_kernel::error::Result<()> {
     let data = VerifiedComputation::new(payload.into_boxed_slice());
-    let mut state = HeightOnly { height };
+    let mut state = HeightOnly {
+        height,
+        programs: Default::default(),
+    };
     let tx = Transaction::new(
         PublicKey::default(),
         0,
@@ -230,4 +255,129 @@ fn verification_is_deterministic() {
     let b = run_at_height(p, ACTIVATION_HEIGHT as u32);
     assert_eq!(a.is_ok(), b.is_ok());
     assert!(a.is_ok());
+}
+
+// ---- Registry-referenced flow: deploy once, then cite by id ----
+
+use blacknet_kernel::transaction::{ComputeReference, DeployProgram, program_id};
+use blacknet_snark::commitment::commit;
+use blacknet_snark::wire::{encode_program, encode_reference};
+
+fn deploy_into(state: &mut HeightOnly, program: &[Instruction<F>], fee: u64) -> Result<()> {
+    let payload = encode_program(program);
+    let data = DeployProgram::new(payload.into_boxed_slice());
+    let tx = Transaction::new(
+        PublicKey::default(),
+        0,
+        Hash::default(),
+        Amt::new(fee),
+        TxKind::DeployProgram,
+        Default::default(),
+    );
+    data.process_impl(&tx, Hash::default(), 0, state)
+}
+
+fn reference_into(state: &mut HeightOnly, payload: Vec<u8>, fee: u64) -> Result<()> {
+    let data = ComputeReference::new(payload.into_boxed_slice());
+    let tx = Transaction::new(
+        PublicKey::default(),
+        0,
+        Hash::default(),
+        Amt::new(fee),
+        TxKind::ComputeReference,
+        Default::default(),
+    );
+    data.process_impl(&tx, Hash::default(), 0, state)
+}
+
+use blacknet_kernel::error::Result;
+
+#[test]
+fn deploy_then_reference_accepted() {
+    let mut state = HeightOnly {
+        height: ACTIVATION_HEIGHT as u32,
+        programs: Default::default(),
+    };
+    let prog = square_add();
+    // Deploy once.
+    let dp = encode_program(&prog);
+    assert!(deploy_into(&mut state, &prog, compute_fee(dp.len())).is_ok());
+
+    // Reference it: only IO + proof travel, the program is in state.
+    let id = commit(&prog);
+    let (io, proof) = prove(&prog, &[f(6)], 100).unwrap();
+    let payload = encode_reference(&id, &io, &proof);
+    assert!(reference_into(&mut state, payload.clone(), compute_fee(payload.len())).is_ok());
+}
+
+#[test]
+fn reference_before_deploy_rejected() {
+    let mut state = HeightOnly {
+        height: ACTIVATION_HEIGHT as u32,
+        programs: Default::default(),
+    };
+    let prog = square_add();
+    let id = commit(&prog);
+    let (io, proof) = prove(&prog, &[f(6)], 100).unwrap();
+    let payload = encode_reference(&id, &io, &proof);
+    // Never deployed: the lookup fails.
+    assert!(reference_into(&mut state, payload.clone(), compute_fee(payload.len())).is_err());
+}
+
+#[test]
+fn redeploy_rejected() {
+    let mut state = HeightOnly {
+        height: ACTIVATION_HEIGHT as u32,
+        programs: Default::default(),
+    };
+    let prog = square_add();
+    let dp = encode_program(&prog);
+    let fee = compute_fee(dp.len());
+    assert!(deploy_into(&mut state, &prog, fee).is_ok());
+    // Same id again: rejected (one id, one program).
+    assert!(deploy_into(&mut state, &prog, fee).is_err());
+}
+
+#[test]
+fn reference_with_wrong_id_rejected() {
+    // Deploy program A, then reference a DIFFERENT id that is not deployed.
+    let mut state = HeightOnly {
+        height: ACTIVATION_HEIGHT as u32,
+        programs: Default::default(),
+    };
+    let prog = square_add();
+    let dp = encode_program(&prog);
+    assert!(deploy_into(&mut state, &prog, compute_fee(dp.len())).is_ok());
+
+    // A proof for a different program, cited under that other program's id.
+    let other = vec![Instruction::Add(2, 1, 1), Instruction::Halt];
+    let other_id = commit(&other);
+    let (io, proof) = prove(&other, &[f(3)], 100).unwrap();
+    let payload = encode_reference(&other_id, &io, &proof);
+    // other_id was never deployed -> rejected.
+    assert!(reference_into(&mut state, payload.clone(), compute_fee(payload.len())).is_err());
+}
+
+#[test]
+fn reference_insufficient_fee_rejected() {
+    let mut state = HeightOnly {
+        height: ACTIVATION_HEIGHT as u32,
+        programs: Default::default(),
+    };
+    let prog = square_add();
+    let dp = encode_program(&prog);
+    deploy_into(&mut state, &prog, compute_fee(dp.len())).unwrap();
+    let id = commit(&prog);
+    let (io, proof) = prove(&prog, &[f(6)], 100).unwrap();
+    let payload = encode_reference(&id, &io, &proof);
+    let low = compute_fee(payload.len()) - 1;
+    assert!(reference_into(&mut state, payload, low).is_err());
+}
+
+#[test]
+fn program_id_is_deterministic() {
+    let prog = square_add();
+    assert_eq!(program_id(&commit(&prog)), program_id(&commit(&prog)));
+    let other = vec![Instruction::Halt];
+    assert_ne!(program_id(&commit(&prog)), program_id(&commit(&other)));
 }

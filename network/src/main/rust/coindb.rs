@@ -32,7 +32,9 @@ use blacknet_kernel::proofofstake::{
     BLOCK_SIZE_SPAN, DEFAULT_MAX_BLOCK_SIZE, INITIAL_DIFFICULTY, ROLLBACK_LIMIT, UPGRADE_THRESHOLD,
     Version as PoSVersion,
 };
-use blacknet_kernel::transaction::{CoinTx, HashTimeLockContractId, MultiSignatureLockContractId};
+use blacknet_kernel::transaction::{
+    CoinTx, HashTimeLockContractId, MultiSignatureLockContractId, ProgramId,
+};
 use blacknet_serialization::format::{from_bytes, to_bytes};
 use blacknet_time::Seconds;
 use fjall::{Database, Error as FjallError, OwnedWriteBatch as WriteBatch};
@@ -45,6 +47,7 @@ pub struct CoinDB {
     accounts: DBView<PublicKey, Account>,
     htlcs: DBView<HashTimeLockContractId, HTLC>,
     multisigs: DBView<MultiSignatureLockContractId, Multisig>,
+    programs: DBView<ProgramId, Box<[u8]>>,
     block_db: Arc<BlockDB>,
 }
 
@@ -59,6 +62,7 @@ impl CoinDB {
             accounts: DBView::new(fjall, "accounts")?,
             htlcs: DBView::new(fjall, "htlcs")?,
             multisigs: DBView::new(fjall, "multisigs")?,
+            programs: DBView::with_blob(fjall, "programs")?,
             block_db,
         }))
     }
@@ -77,6 +81,10 @@ impl CoinDB {
 
     pub fn multisig(&self, id: MultiSignatureLockContractId) -> Option<Multisig> {
         self.multisigs.get(id)
+    }
+
+    pub fn program(&self, id: ProgramId) -> Option<Box<[u8]>> {
+        self.programs.get_bytes(id)
     }
 
     pub fn warnings(&self, warnings: &mut Vec<String>) {
@@ -262,6 +270,7 @@ struct Update {
     accounts: HashMap<PublicKey, Account>,
     htlcs: HashMap<HashTimeLockContractId, Option<HTLC>>,
     multisigs: HashMap<MultiSignatureLockContractId, Option<Multisig>>,
+    programs: HashMap<ProgramId, Option<Box<[u8]>>>,
     undo: UndoBlock,
     block_index: Option<BlockIndex>,
     prev_index: Option<BlockIndex>,
@@ -310,6 +319,7 @@ impl Update {
             accounts: HashMap::new(),
             htlcs: HashMap::new(),
             multisigs: HashMap::new(),
+            programs: HashMap::new(),
             undo,
             block_index: None,
             prev_index: None,
@@ -424,6 +434,31 @@ impl CoinTx for Update {
 
     fn remove_multisig(&mut self, id: MultiSignatureLockContractId) {
         self.multisigs.insert(id, None);
+    }
+
+    fn add_program(&mut self, id: ProgramId, code: Box<[u8]>) {
+        // Programs are write-once; undo records that the id had no prior
+        // value so a reorg removes it.
+        self.undo.add_program(id, None);
+        self.programs.insert(id, Some(code));
+    }
+
+    fn has_program(&mut self, id: ProgramId) -> bool {
+        match self.programs.get(&id) {
+            Some(slot) => slot.is_some(),
+            None => self.coin_db.program(id).is_some(),
+        }
+    }
+
+    fn get_program(&mut self, id: ProgramId) -> Result<Box<[u8]>> {
+        match self.programs.get(&id) {
+            Some(Some(code)) => Ok(code.clone()),
+            Some(None) => Err(Error::Invalid("Program not found".to_owned())),
+            None => self
+                .coin_db
+                .program(id)
+                .ok_or(Error::Invalid("Program not found".to_owned())),
+        }
     }
 }
 

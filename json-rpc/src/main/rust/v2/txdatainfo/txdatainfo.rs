@@ -75,6 +75,9 @@ impl TxDataInfo {
             TxKind::RefundHTLC => to_value(RefundHTLCInfo::new(data, address_codec)?)?,
             TxKind::SpendMultisig => to_value(SpendMultisigInfo::new(data, address_codec)?)?,
             TxKind::Transfer => to_value(TransferInfo::new(data, address_codec)?)?,
+            TxKind::VerifiedComputation => to_value(VerifiedComputationInfo::new(data)?)?,
+            TxKind::DeployProgram => to_value(DeployProgramInfo::new(data)?)?,
+            TxKind::ComputeReference => to_value(ComputeReferenceInfo::new(data)?)?,
             TxKind::WithdrawFromLease => {
                 to_value(WithdrawFromLeaseInfo::new(data, address_codec)?)?
             }

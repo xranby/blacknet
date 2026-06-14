@@ -359,3 +359,79 @@ pub fn decode_compute(bytes: &[u8]) -> Result<(Vec<Instruction<F>>, PublicIO, Pr
         },
     ))
 }
+
+use crate::commitment::{COMMITMENT_WIDTH, ProgramCommitment};
+
+/// Canonically encodes a program alone — the payload of a program-deploy
+/// transaction in the registry-referenced flow. The deployed bytes are what
+/// `commit` is later re-derived from, so the stored form is exactly this.
+#[must_use]
+pub fn encode_program(program: &[Instruction<F>]) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.version(WIRE_VERSION);
+    w.u32(program.len() as u32);
+    for i in program {
+        w.instruction(i);
+    }
+    w.finish()
+}
+
+/// Decodes a program payload, rejecting malformed / non-canonical / trailing
+/// input.
+pub fn decode_program(bytes: &[u8]) -> Result<Vec<Instruction<F>>, Error> {
+    let mut r = Reader::new(bytes);
+    r.version(WIRE_VERSION)?;
+    let plen = r.u32()? as usize;
+    if plen > (MAX_LEN as usize) {
+        return Err(Error::Overlong);
+    }
+    let mut program = Vec::with_capacity(plen);
+    for _ in 0..plen {
+        program.push(r.instruction()?);
+    }
+    r.finish()?;
+    Ok(program)
+}
+
+/// Canonically encodes a registry-referenced computation: the program id
+/// (cited, not carried) together with its public IO and proof. The program
+/// itself is fetched from chain state by this id at validation time.
+#[must_use]
+pub fn encode_reference(program_id: &ProgramCommitment, io: &PublicIO, proof: &Proof) -> Vec<u8> {
+    let mut w = Writer::new();
+    w.version(WIRE_VERSION);
+    for k in 0..COMMITMENT_WIDTH {
+        w.field(program_id.0[k]);
+    }
+    w.field_slice(&io.inputs);
+    w.field_slice(&io.outputs);
+    w.version(proof.version);
+    w.u32_slice(&proof.pc_trace);
+    w.field_slice(&proof.witness);
+    w.finish()
+}
+
+/// Decodes a registry-referenced computation payload.
+pub fn decode_reference(bytes: &[u8]) -> Result<(ProgramCommitment, PublicIO, Proof), Error> {
+    let mut r = Reader::new(bytes);
+    r.version(WIRE_VERSION)?;
+    let mut id = [F::from(0u32); COMMITMENT_WIDTH];
+    for slot in &mut id {
+        *slot = r.field()?;
+    }
+    let inputs = r.field_slice()?;
+    let outputs = r.field_slice()?;
+    let proof_version = r.byte()?;
+    let pc_trace = r.u32_slice()?;
+    let witness = r.field_slice()?;
+    r.finish()?;
+    Ok((
+        ProgramCommitment(id),
+        PublicIO { inputs, outputs },
+        Proof {
+            version: proof_version,
+            pc_trace,
+            witness,
+        },
+    ))
+}

@@ -27,6 +27,10 @@ use alloc::borrow::ToOwned;
 use blacknet_serialization::format::from_bytes;
 use blacknet_time::Seconds;
 
+/// The id under which a deployed program is stored: the canonical bytes of
+/// its commitment.
+pub type ProgramId = [u8; 32];
+
 pub trait CoinTx: Sized {
     fn add_supply(&mut self, amount: Amount);
     fn sub_supply(&mut self, amount: Amount);
@@ -43,6 +47,13 @@ pub trait CoinTx: Sized {
     fn add_multisig(&mut self, id: MultiSignatureLockContractId, multisig: Multisig);
     fn get_multisig(&mut self, id: MultiSignatureLockContractId) -> Result<Multisig>;
     fn remove_multisig(&mut self, id: MultiSignatureLockContractId);
+    /// Stores a deployed program by its commitment id. Idempotent at the
+    /// caller: a deploy transaction must reject a re-deploy of the same id.
+    fn add_program(&mut self, id: ProgramId, code: alloc::boxed::Box<[u8]>);
+    /// Whether a program is already deployed under this id.
+    fn has_program(&mut self, id: ProgramId) -> bool;
+    /// Fetches a deployed program's canonical bytes, or errors if unknown.
+    fn get_program(&mut self, id: ProgramId) -> Result<alloc::boxed::Box<[u8]>>;
 
     fn process_transaction_impl(&mut self, tx: &Transaction, hash: Hash) -> Result<()> {
         tx.verify_signature(hash)?;
@@ -98,6 +109,14 @@ pub trait CoinTx: Sized {
             }
             TxKind::VerifiedComputation => {
                 let data = from_bytes::<VerifiedComputation>(tx.data_bytes(), false)?;
+                data.process(tx, hash, self)
+            }
+            TxKind::DeployProgram => {
+                let data = from_bytes::<DeployProgram>(tx.data_bytes(), false)?;
+                data.process(tx, hash, self)
+            }
+            TxKind::ComputeReference => {
+                let data = from_bytes::<ComputeReference>(tx.data_bytes(), false)?;
                 data.process(tx, hash, self)
             }
             TxKind::Generated => Err(Error::Invalid("Generated as individual tx".to_owned())),

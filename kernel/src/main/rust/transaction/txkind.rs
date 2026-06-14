@@ -34,6 +34,8 @@ pub enum TxKind {
     // Dispel = 13,
     Batch = 16,
     VerifiedComputation = 17,
+    DeployProgram = 18,
+    ComputeReference = 19,
     // Genesis = 125,
     Generated = 254,
 }
