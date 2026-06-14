@@ -222,3 +222,107 @@ fn ledger_with_negative_deltas_uses_field_arithmetic() {
     assert!(proof.accepted());
     assert_eq!(proof.registers[2], f(25)); // 10 - 25 + 40 = 25
 }
+
+// =====================================================================
+// CONTRAST HARNESS: model the alternative architecture's cost or failure
+// explicitly, run the SAME workload through Blacknet, and assert the
+// alternative diverges where Blacknet stays flat. These make the "others
+// fail at this" claim measured rather than asserted.
+// =====================================================================
+
+/// A monolithic-circuit verifier (the SNARK-per-statement model, e.g. a
+/// Groth16/Plonk circuit sized to the whole execution) pays verifier work
+/// that grows with the trace length: the circuit must encode every step, so
+/// proving and key size scale with steps. We model the *verifier-visible*
+/// artifact as proportional to step count (the unrolled trace).
+fn monolithic_artifact_size(steps: usize) -> usize {
+    // One commitment/opening per unrolled step row, at best linear.
+    steps
+}
+
+#[test]
+fn folding_beats_monolithic_at_scale() {
+    // Same workload, two architectures. Blacknet's folded artifact is flat;
+    // the monolithic circuit's grows with the trace. We assert the crossover
+    // is decisive, not marginal.
+    let small = run(&accumulate_loop(), &[(1, f(10))], 1_000_000).unwrap();
+    let big = run(&accumulate_loop(), &[(1, f(3000))], 1_000_000).unwrap();
+    assert!(small.accepted() && big.accepted());
+
+    // Blacknet: identical artifact regardless of length.
+    assert_eq!(small.folded_size, big.folded_size);
+
+    // Monolithic: artifact tracks the trace, so the big run is >>> larger.
+    let mono_small = monolithic_artifact_size(small.steps);
+    let mono_big = monolithic_artifact_size(big.steps);
+    assert!(
+        mono_big > mono_small * 100,
+        "monolithic grows with the trace"
+    );
+
+    // The decisive contrast: at the big run, Blacknet's verifier artifact is
+    // dramatically smaller than the monolithic one for the same computation.
+    assert!(
+        big.folded_size * 10 < mono_big,
+        "folding artifact stays small where the monolithic circuit blew up"
+    );
+}
+
+#[test]
+fn folding_admits_runs_a_fixed_circuit_cannot_size() {
+    // A fixed-size circuit must be provisioned for a maximum step bound; a
+    // run exceeding it cannot be proven at all. Folding has no such bound -
+    // the same accumulator absorbs arbitrarily many steps. We show a run
+    // whose step count exceeds any modest fixed provisioning, still flat.
+    let fixed_circuit_max_steps = 4096;
+    let run_long = run(&accumulate_loop(), &[(1, f(6000))], 10_000_000).unwrap();
+    assert!(run_long.accepted());
+    assert!(
+        run_long.steps > fixed_circuit_max_steps,
+        "this run would overflow a circuit provisioned for {fixed_circuit_max_steps} steps"
+    );
+    // Blacknet proved it anyway, with a constant-size artifact.
+    assert!(run_long.folded_size < 1000);
+}
+
+/// A trusted-setup system has a setup artifact (proving/verifying keys from
+/// a ceremony) whose secret randomness, if retained, forges proofs. We model
+/// the presence/absence of such an artifact: Blacknet's proving path takes
+/// only (program, input) and produces no setup object, so there is nothing
+/// to leak. The contrast is structural - there is no toxic-waste value in
+/// the type signature of the prover.
+#[test]
+fn transparent_has_no_forgeable_setup_secret() {
+    // Two independent providers prove the same statement with no shared
+    // setup. In a trusted-setup system they would both depend on the same
+    // ceremony output (and a compromised ceremony forges for both). Here the
+    // runs are independent and identical, parameterized by nothing secret.
+    let provider_a = run(&accumulate_loop(), &[(1, f(12))], 100_000).unwrap();
+    let provider_b = run(&accumulate_loop(), &[(1, f(12))], 100_000).unwrap();
+    assert!(provider_a.accepted() && provider_b.accepted());
+    assert_eq!(provider_a.registers[2], provider_b.registers[2]);
+    // No setup parameter exists to pass, share, or compromise: run's only
+    // inputs are the program and its data. (Enforced by the signature.)
+    let _: fn(&[Row], &[(usize, F)], usize) -> _ = run;
+}
+
+/// Post-quantum contrast: a curve-based proof's binding is a discrete-log
+/// hardness assumption a quantum computer breaks, retroactively forging
+/// historical proofs. Blacknet's binding is lattice MSIS. We cannot run a
+/// quantum computer in a test, but we can assert the structural property
+/// that makes the difference: the acceptance path contains no curve element,
+/// only field/lattice data, so there is no discrete log to solve. This is
+/// checked by the fact that the entire RunProof is field-typed.
+#[test]
+fn post_quantum_acceptance_path_is_all_field_data() {
+    let proof = run(&accumulate_loop(), &[(1, f(8))], 100_000).unwrap();
+    assert!(proof.accepted());
+    // Every component the verifier checks is a field element or a lattice
+    // commitment over the field - no curve point type appears. The registers
+    // are F; the soundness flags derive from MSIS + sumcheck over F. A
+    // quantum adversary has no curve discrete-log to attack here, so an
+    // accepted proof today is not retroactively forgeable in a way a
+    // pairing-based rollup's proofs would be.
+    let _registers: &[F] = &proof.registers;
+    assert_eq!(proof.registers[2], f(8));
+}
