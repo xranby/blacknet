@@ -27,6 +27,7 @@ pub mod masking;
 pub mod modulecommitment;
 pub mod opening;
 pub mod pipeline;
+pub mod programbinding;
 pub mod proof;
 pub mod recursion;
 pub mod recursive;
