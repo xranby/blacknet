@@ -127,3 +127,7 @@ path = "src/test/rust/programbinding_committed.rs"
 [[test]]
 name = "merkle_circuit"
 path = "src/test/rust/merkle_circuit.rs"
+
+[[test]]
+name = "measurements"
+path = "src/test/rust/measurements.rs"
