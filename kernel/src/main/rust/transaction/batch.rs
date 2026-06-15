@@ -148,6 +148,10 @@ impl TxData for Batch {
                     let data = from_bytes::<ComputeReference>(data_bytes, false)?;
                     data.process_impl(tx, hash, (index + 1) as u32, coin_tx)?;
                 }
+                TxKind::ComputeReferenceSuccinct => {
+                    let data = from_bytes::<ComputeReferenceSuccinct>(data_bytes, false)?;
+                    data.process_impl(tx, hash, (index + 1) as u32, coin_tx)?;
+                }
                 TxKind::Generated => {
                     return Err(Error::Invalid("Generated as individual tx".to_owned()));
                 }

@@ -36,6 +36,7 @@ pub enum TxKind {
     VerifiedComputation = 17,
     DeployProgram = 18,
     ComputeReference = 19,
+    ComputeReferenceSuccinct = 20,
     // Genesis = 125,
     Generated = 254,
 }

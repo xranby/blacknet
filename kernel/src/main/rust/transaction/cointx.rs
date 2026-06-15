@@ -115,6 +115,10 @@ pub trait CoinTx: Sized {
                 let data = from_bytes::<DeployProgram>(tx.data_bytes(), false)?;
                 data.process(tx, hash, self)
             }
+            TxKind::ComputeReferenceSuccinct => {
+                let data = from_bytes::<ComputeReferenceSuccinct>(tx.data_bytes(), false)?;
+                data.process(tx, hash, self)
+            }
             TxKind::ComputeReference => {
                 let data = from_bytes::<ComputeReference>(tx.data_bytes(), false)?;
                 data.process(tx, hash, self)

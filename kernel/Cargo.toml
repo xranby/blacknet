@@ -88,3 +88,7 @@ path = "src/test/rust/verifiedcomputation.rs"
 [[test]]
 name = "verifiedcomputationtx"
 path = "src/test/rust/verifiedcomputationtx.rs"
+
+[[test]]
+name = "computereferencesuccinct"
+path = "src/test/rust/computereferencesuccinct.rs"

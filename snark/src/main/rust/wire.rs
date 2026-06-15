@@ -42,6 +42,9 @@ pub enum Error {
     BadVersion(u8),
     NonCanonical,
     Overlong,
+    /// Structurally invalid for this codec (e.g. a succinct encoder handed a
+    /// transparent or zero-knowledge aggregate it does not serialize).
+    Malformed,
 }
 
 /// A growable canonical encoder.
@@ -76,6 +79,10 @@ impl Writer {
     }
 
     pub fn u64(&mut self, n: u64) {
+        self.buf.extend_from_slice(&n.to_le_bytes());
+    }
+
+    pub fn u128(&mut self, n: u128) {
         self.buf.extend_from_slice(&n.to_le_bytes());
     }
 
@@ -171,6 +178,11 @@ impl<'a> Reader<'a> {
     pub fn u64(&mut self) -> Result<u64, Error> {
         let b = self.take(8)?;
         Ok(u64::from_le_bytes(b.try_into().expect("8 bytes")))
+    }
+
+    pub fn u128(&mut self) -> Result<u128, Error> {
+        let b = self.take(16)?;
+        Ok(u128::from_le_bytes(b.try_into().expect("16 bytes")))
     }
 
     fn len_prefix(&mut self) -> Result<usize, Error> {
@@ -434,4 +446,224 @@ pub fn decode_reference(bytes: &[u8]) -> Result<(ProgramCommitment, PublicIO, Pr
             witness,
         },
     ))
+}
+
+// ===========================================================================
+// Succinct wire encoding — the AggregateProof with a succinct opening.
+//
+// The transparent codec above ships the full witness; this one ships the
+// succinct opening instead (binarity + JL projection + the batched binding),
+// so a referenced computation's packet is ~constant in the trace length.
+// Same canonical discipline: versioned, length-bounded, deterministic, and
+// rejecting trailing bytes. The on-chain verifier reconstructs Shape from the
+// (referenced) program and the CommitmentKey deterministically, then calls
+// `pipeline::verify_aggregate`.
+//
+// Scope: the non-ZK succinct path (`succinct: Some`, `binding: Some`), which
+// is the deployed case. ZK and transparent-aggregate variants are rejected by
+// this codec (they have their own paths) rather than silently mis-encoded.
+// ===========================================================================
+
+use crate::hypernova::{Accumulator, MultifoldProof};
+use crate::opening::OpeningProof;
+use crate::pipeline::AggregateProof;
+use blacknet_crypto::polynomial::UnivariatePolynomial;
+use blacknet_crypto::sumcheck::Proof as SumCheckProof;
+
+impl Writer {
+    fn sumcheck(&mut self, p: &SumCheckProof<F>) {
+        self.u32(p.variables() as u32);
+        for claim in p {
+            let coeffs: Vec<F> = claim.clone().into();
+            self.field_slice(&coeffs);
+        }
+    }
+
+    fn multifold(&mut self, m: &MultifoldProof) {
+        self.sumcheck(&m.sumcheck);
+        for x in &m.sigma {
+            self.field(*x);
+        }
+        for x in &m.theta {
+            self.field(*x);
+        }
+    }
+
+    fn accumulator(&mut self, a: &Accumulator) {
+        self.field_vec(&a.commitment);
+        self.field_slice(&a.point);
+        for x in &a.evals {
+            self.field(*x);
+        }
+        self.field_slice(&a.x);
+        self.u128(a.norm_bound);
+    }
+
+    fn opening(&mut self, o: &OpeningProof) {
+        self.sumcheck(&o.binarity);
+        self.field(o.bit_eval);
+        self.field_vec(&o.projection);
+    }
+}
+
+impl Reader<'_> {
+    fn sumcheck(&mut self) -> Result<SumCheckProof<F>, Error> {
+        let n = self.len_prefix()?;
+        let mut claims = Vec::with_capacity(n);
+        for _ in 0..n {
+            claims.push(UnivariatePolynomial::from(self.field_slice()?));
+        }
+        Ok(SumCheckProof::new(claims))
+    }
+
+    fn multifold(&mut self) -> Result<MultifoldProof, Error> {
+        let sumcheck = self.sumcheck()?;
+        let mut sigma = [F::from(0); 3];
+        let mut theta = [F::from(0); 3];
+        for x in &mut sigma {
+            *x = self.field()?;
+        }
+        for x in &mut theta {
+            *x = self.field()?;
+        }
+        Ok(MultifoldProof {
+            sumcheck,
+            sigma,
+            theta,
+        })
+    }
+
+    fn accumulator(&mut self) -> Result<Accumulator, Error> {
+        let commitment = self.field_vec()?;
+        let point = self.field_slice()?;
+        let mut evals = [F::from(0); 3];
+        for x in &mut evals {
+            *x = self.field()?;
+        }
+        let x = self.field_slice()?;
+        let norm_bound = self.u128()?;
+        Ok(Accumulator {
+            commitment,
+            point,
+            evals,
+            x,
+            norm_bound,
+        })
+    }
+
+    fn opening(&mut self) -> Result<OpeningProof, Error> {
+        let binarity = self.sumcheck()?;
+        let bit_eval = self.field()?;
+        let projection = self.field_vec()?;
+        Ok(OpeningProof {
+            binarity,
+            bit_eval,
+            projection,
+        })
+    }
+}
+
+/// Canonical body of a succinct `AggregateProof` (non-ZK path). Encodes the
+/// public verification data only — no witness. Rejects ZK / transparent-
+/// aggregate variants.
+fn write_aggregate(w: &mut Writer, p: &AggregateProof) -> Result<(), Error> {
+    let succinct = p.succinct.as_ref().ok_or(Error::Malformed)?;
+    let (bproof, beval) = p.binding.as_ref().ok_or(Error::Malformed)?;
+    if p.succinct_zk.is_some() || p.blind.is_some() || p.opening.dimension() != 0 {
+        return Err(Error::Malformed);
+    }
+    // instances
+    w.u32(p.ios.len() as u32);
+    for io in &p.ios {
+        w.field_slice(io);
+    }
+    w.u32(p.commitments.len() as u32);
+    for c in &p.commitments {
+        w.field_vec(c);
+    }
+    w.u32(p.norms.len() as u32);
+    for &n in &p.norms {
+        w.u128(n);
+    }
+    // folds
+    w.multifold(&p.init);
+    w.u32(p.folds.len() as u32);
+    for m in &p.folds {
+        w.multifold(m);
+    }
+    // opening + binding + accumulator
+    w.opening(succinct);
+    w.u32(p.opening_len as u32);
+    w.sumcheck(bproof);
+    w.field(*beval);
+    w.accumulator(&p.accumulator);
+    Ok(())
+}
+
+fn read_aggregate(r: &mut Reader) -> Result<AggregateProof, Error> {
+    let n_ios = r.len_prefix()?;
+    let ios = (0..n_ios)
+        .map(|_| r.field_slice())
+        .collect::<Result<Vec<_>, _>>()?;
+    let n_c = r.len_prefix()?;
+    let commitments = (0..n_c)
+        .map(|_| r.field_vec())
+        .collect::<Result<Vec<_>, _>>()?;
+    let n_n = r.len_prefix()?;
+    let norms = (0..n_n).map(|_| r.u128()).collect::<Result<Vec<_>, _>>()?;
+    let init = r.multifold()?;
+    let n_f = r.len_prefix()?;
+    let folds = (0..n_f)
+        .map(|_| r.multifold())
+        .collect::<Result<Vec<_>, _>>()?;
+    let succinct = r.opening()?;
+    let opening_len = r.u32()? as usize;
+    let binding_proof = r.sumcheck()?;
+    let binding_eval = r.field()?;
+    let accumulator = r.accumulator()?;
+    Ok(AggregateProof {
+        ios,
+        commitments,
+        norms,
+        init,
+        folds,
+        blind: None,
+        opening: DenseVector::from(Vec::new()),
+        succinct: Some(succinct),
+        opening_len,
+        succinct_zk: None,
+        binding: Some((binding_proof, binding_eval)),
+        accumulator,
+    })
+}
+
+/// Encodes a succinct referenced computation: program-id + the succinct
+/// aggregate proof. The program is already on chain (by id); this is the
+/// bandwidth-minimal form — packet size is ~constant in the trace length.
+pub fn encode_reference_succinct(
+    program_id: &ProgramCommitment,
+    proof: &AggregateProof,
+) -> Result<Vec<u8>, Error> {
+    let mut w = Writer::new();
+    w.version(WIRE_VERSION);
+    for k in 0..COMMITMENT_WIDTH {
+        w.field(program_id.0[k]);
+    }
+    write_aggregate(&mut w, proof)?;
+    Ok(w.finish())
+}
+
+/// Decodes a succinct referenced computation payload.
+pub fn decode_reference_succinct(
+    bytes: &[u8],
+) -> Result<(ProgramCommitment, AggregateProof), Error> {
+    let mut r = Reader::new(bytes);
+    r.version(WIRE_VERSION)?;
+    let mut id = [F::from(0); COMMITMENT_WIDTH];
+    for k in id.iter_mut() {
+        *k = r.field()?;
+    }
+    let proof = read_aggregate(&mut r)?;
+    r.finish()?;
+    Ok((ProgramCommitment(id), proof))
 }

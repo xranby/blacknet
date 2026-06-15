@@ -198,3 +198,97 @@ impl TxData for ComputeReference {
         Ok(())
     }
 }
+
+/// A succinct referenced computation: cites a deployed `program_id` and
+/// carries a succinct `AggregateProof` (witness omitted) instead of the
+/// transparent proof. This is the bandwidth-minimal form — the packet is
+/// ~constant in the trace length (~3-4 KB vs tens of KB transparent).
+///
+/// The verifier reconstructs everything it needs deterministically: the
+/// program from the registry (by id), its R1CS `Shape` from the program (the
+/// matrices are input-independent, so a canonical dummy input reproduces the
+/// prover's shape), and the lattice `CommitmentKey` from the fixed public
+/// setup. It then runs `pipeline::verify_aggregate`, never executing the
+/// program.
+#[derive(Deserialize, Serialize)]
+pub struct ComputeReferenceSuccinct {
+    pub payload: Box<[u8]>,
+}
+
+impl ComputeReferenceSuccinct {
+    #[must_use]
+    pub const fn new(payload: Box<[u8]>) -> Self {
+        Self { payload }
+    }
+}
+
+impl TxData for ComputeReferenceSuccinct {
+    fn process_impl(
+        &self,
+        tx: &Transaction,
+        _hash: Hash,
+        _data_index: u32,
+        coin_tx: &mut impl CoinTx,
+    ) -> Result<()> {
+        use blacknet_snark::pipeline::{Shape, verify_aggregate};
+        use blacknet_snark::wire::decode_reference_succinct;
+        use blacknet_snark::witnesscommitment::{CommitmentKey, F, SECURE_ROWS};
+
+        let height = u64::from(coin_tx.height());
+        if height < ACTIVATION_HEIGHT {
+            return Err(Error::Invalid("verified computation not active".into()));
+        }
+        if self.payload.len() > params::MAX_PAYLOAD_BYTES {
+            return Err(Error::Invalid("payload exceeds size cap".into()));
+        }
+        // Fee floor priced over the payload (cheapest checks first).
+        let required = compute_fee(self.payload.len());
+        if tx.fee().value() < required {
+            return Err(Error::Invalid(format!(
+                "fee {} below verification cost {required}",
+                tx.fee().value()
+            )));
+        }
+        let wire_version = self.payload.first().copied().unwrap_or(0);
+        if !accepted_wire_versions(height).contains(&wire_version) {
+            return Err(Error::Invalid(format!(
+                "unaccepted wire version {wire_version}"
+            )));
+        }
+
+        let (cited_id, proof) = decode_reference_succinct(&self.payload)
+            .map_err(|_| Error::Invalid("malformed succinct reference payload".into()))?;
+
+        // Fetch the deployed program; the cited id must be its commitment.
+        let stored = coin_tx.get_program(program_id(&cited_id))?;
+        let program =
+            decode_program(&stored).map_err(|_| Error::Invalid("corrupt stored program".into()))?;
+        if commit(&program) != cited_id {
+            return Err(Error::Invalid(
+                "cited id is not the program commitment".into(),
+            ));
+        }
+
+        // Reconstruct the R1CS shape from the program. The matrices are
+        // input-independent (the foldability invariant), so a canonical dummy
+        // input reproduces the prover's shape. The aggregate IO is
+        // inputs + REGISTERS (seeded inputs of state 0, plus the full final
+        // state), so the input arity is io_len - REGISTERS. Seeding the full
+        // IO width instead would over-seed registers and fail arithmetization.
+        use blacknet_arith::trace::REGISTERS;
+        let io_len = proof.ios.first().map_or(0, |io| io.len());
+        let inputs = io_len
+            .checked_sub(REGISTERS)
+            .ok_or_else(|| Error::Invalid("proof IO smaller than register file".into()))?;
+        let dummy = alloc::vec![F::from(0); inputs];
+        let shape = Shape::derive(program, &dummy, params::MAX_STEPS as u64)
+            .map_err(|_| Error::Invalid("program shape not derivable".into()))?;
+        // The lattice commitment key is the fixed public setup at the shape's
+        // witness width and the consensus SIS dimension.
+        let key = CommitmentKey::setup(shape.elements, SECURE_ROWS);
+
+        verify_aggregate(&shape, &key, &proof)
+            .map_err(|e| Error::Invalid(format!("succinct proof rejected: {e:?}")))?;
+        Ok(())
+    }
+}
