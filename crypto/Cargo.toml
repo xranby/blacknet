@@ -267,3 +267,7 @@ harness = false
 [[test]]
 name = "usecase_blacklemon"
 path = "src/test/rust/usecase_blacklemon.rs"
+
+[[test]]
+name = "operatornorm"
+path = "src/test/rust/operatornorm.rs"

@@ -23,6 +23,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod ajtaicommitment;
+pub mod operatornorm;
 pub mod algebra;
 pub mod assigner;
 pub mod bigint;
