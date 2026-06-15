@@ -271,3 +271,7 @@ path = "src/test/rust/usecase_blacklemon.rs"
 [[test]]
 name = "operatornorm"
 path = "src/test/rust/operatornorm.rs"
+
+[[test]]
+name = "matrixoperatornorm"
+path = "src/test/rust/matrixoperatornorm.rs"

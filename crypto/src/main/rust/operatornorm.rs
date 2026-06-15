@@ -153,3 +153,155 @@ pub fn isqrt_ceil(x: u128) -> u128 {
     // `r` is now floor(sqrt(x)); ceil if not a perfect square.
     if r * r == x { r } else { r + 1 }
 }
+
+// ---------------------------------------------------------------------------
+// Matrix-ring operator norms — folding with NON-COMMUTING challenges.
+//
+// The bounds above are for the commutative negacyclic ring `Z[X]/(Xⁿ+1)`: a
+// fold multiplies a witness by a ring challenge and the norm expands by the
+// skew-circulant spectral norm. A matrix-ring instantiation folds with `N×N`
+// matrices of ring elements (`crypto::algebra::MatrixRing`), and those
+// challenges DO NOT COMMUTE, so the parameter analysis must change.
+//
+// Two new quantities matter:
+//
+//   * the operator norm of multiplication-by-`A` on the module `Rᴺ`. Lifting
+//     each ring entry `A[i][j]` to its `n×n` skew-circulant block gives an
+//     `(Nn)×(Nn)` integer matrix `M_A`; `‖M_A‖₂ = √λ_max(M_Aᵀ M_A)` is the
+//     exact per-fold expansion, certified by the SAME Gershgorin bound on the
+//     integer Gram matrix used in the scalar case.
+//
+//   * the commutator `[A,B] = AB − BA` (rat4's `MatrixRing::commutator`). When
+//     two folds with challenges `A` then `B` are reordered, the accumulated
+//     state differs by `[B,A]·w`, so `‖M_{[A,B]}‖₂` bounds the reordering
+//     slack the extractor must absorb in non-commutative folding. For
+//     commuting challenges it is zero and folding norm growth is as tight as
+//     the commutative case; the certified commutator norm says how far a given
+//     challenge set departs from that ideal.
+//
+// All arithmetic stays exact `i64`, so the results are theorems about the
+// integers, suitable for parameter derivation — the matrix-ring analogue of
+// the scalar spectral-expansion analysis.
+
+/// A matrix-ring element for analysis: an `N×N` grid (row-major) of ring
+/// elements, each a coefficient vector of length `n` in `Z[X]/(Xⁿ+1)`.
+pub struct MatrixRingElement {
+    /// `n_rows = n_cols = N`.
+    pub dim: usize,
+    /// Ring degree `n`.
+    pub degree: usize,
+    /// `entries[i*N + j]` is the coefficient vector of block `(i,j)`.
+    pub entries: Vec<Vec<i64>>,
+}
+
+impl MatrixRingElement {
+    /// Builds from a flat row-major list of `N*N` coefficient vectors.
+    #[must_use]
+    pub fn new(dim: usize, degree: usize, entries: Vec<Vec<i64>>) -> Self {
+        debug_assert_eq!(entries.len(), dim * dim);
+        debug_assert!(entries.iter().all(|c| c.len() == degree));
+        Self {
+            dim,
+            degree,
+            entries,
+        }
+    }
+
+    /// The `(Nn)×(Nn)` integer block multiplication matrix `M_A`: block
+    /// `(i,j)` is the `n×n` negacyclic multiplication matrix of entry `(i,j)`,
+    /// so `M_A` acting on a stacked module vector reproduces `A·w` exactly.
+    #[must_use]
+    pub fn block_matrix(&self) -> Vec<Vec<i64>> {
+        let (n, d) = (self.dim, self.degree);
+        let size = n * d;
+        let mut m = vec![vec![0i64; size]; size];
+        for bi in 0..n {
+            for bj in 0..n {
+                let blk = negacyclic_matrix(&self.entries[bi * n + bj]);
+                for r in 0..d {
+                    for c in 0..d {
+                        m[bi * d + r][bj * d + c] = blk[r][c];
+                    }
+                }
+            }
+        }
+        m
+    }
+}
+
+/// Ring product `c = a·b` in `Z[X]/(Xⁿ+1)` on coefficient vectors (the same
+/// negacyclic convolution the crate's `Convolution` uses), for composing
+/// matrix-ring entries during analysis.
+#[must_use]
+pub fn ring_mul(a: &[i64], b: &[i64]) -> Vec<i64> {
+    let n = a.len();
+    let mut c = vec![0i64; n];
+    for (k, ck) in c.iter_mut().enumerate() {
+        let mut s = 0i64;
+        for i in 0..=k {
+            s += a[i] * b[k - i];
+        }
+        for i in k + 1..n {
+            s -= a[i] * b[k + n - i];
+        }
+        *ck = s;
+    }
+    c
+}
+
+/// Matrix-ring product `A·B` (row-major coefficient grids), used to form the
+/// commutator. `N` is `dim`, `n` is `degree`.
+#[must_use]
+pub fn matrix_ring_mul(a: &MatrixRingElement, b: &MatrixRingElement) -> MatrixRingElement {
+    let (n, d) = (a.dim, a.degree);
+    let mut out = vec![vec![0i64; d]; n * n];
+    for i in 0..n {
+        for j in 0..n {
+            let mut acc = vec![0i64; d];
+            for k in 0..n {
+                let p = ring_mul(&a.entries[i * n + k], &b.entries[k * n + j]);
+                for t in 0..d {
+                    acc[t] += p[t];
+                }
+            }
+            out[i * n + j] = acc;
+        }
+    }
+    MatrixRingElement::new(n, d, out)
+}
+
+/// The commutator `[A,B] = A·B − B·A` as a matrix-ring element, mirroring
+/// `MatrixRing::commutator`. Folding-reorder slack is governed by its norm.
+#[must_use]
+pub fn commutator(a: &MatrixRingElement, b: &MatrixRingElement) -> MatrixRingElement {
+    let ab = matrix_ring_mul(a, b);
+    let ba = matrix_ring_mul(b, a);
+    let (n, d) = (a.dim, a.degree);
+    let mut out = vec![vec![0i64; d]; n * n];
+    for e in 0..n * n {
+        for t in 0..d {
+            out[e][t] = ab.entries[e][t] - ba.entries[e][t];
+        }
+    }
+    MatrixRingElement::new(n, d, out)
+}
+
+/// Certified upper bound on the operator (spectral) norm of multiplication by
+/// a matrix-ring challenge `A` on the module `Rᴺ`: `‖M_A‖₂ ≤ ⌈√gershgorin⌉`,
+/// via the exact integer Gram matrix of the `(Nn)×(Nn)` block lift. This is
+/// the rigorous per-fold norm expansion for matrix-ring folding.
+#[must_use]
+pub fn matrix_multiplication_norm_bound(a: &MatrixRingElement) -> u128 {
+    let m = a.block_matrix();
+    let g = gram(&m);
+    let lambda = gershgorin_lambda_max(&g).max(0) as u128;
+    isqrt_ceil(lambda)
+}
+
+/// Certified upper bound on the commutator norm `‖[A,B]‖₂` (spectral norm of
+/// the block lift of `A·B − B·A`). Zero for commuting challenges; otherwise
+/// the reordering slack a non-commutative folding extractor must bound.
+#[must_use]
+pub fn commutator_norm_bound(a: &MatrixRingElement, b: &MatrixRingElement) -> u128 {
+    matrix_multiplication_norm_bound(&commutator(a, b))
+}
