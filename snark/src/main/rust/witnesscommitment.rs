@@ -111,6 +111,14 @@ impl CommitmentKey {
         &self.a * d
     }
 
+    /// The public Ajtai matrix `A`. Exposed for the commitment-binding
+    /// argument (`opening::prove_binding`), which composes `A` with the bit
+    /// gadget to tie a succinct opening to `C = A·d`.
+    #[must_use]
+    pub const fn matrix(&self) -> &DenseMatrix<F> {
+        &self.a
+    }
+
     /// Opening check: recomputation plus the binding norm bound. The norm
     /// bound is enforced here, on the verifier path, never trusted from the
     /// prover: exceeding it breaks soundness silently, not completeness.

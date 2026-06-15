@@ -209,6 +209,12 @@ pub struct AggregateProof {
     /// A zero-knowledge succinct opening: masked sumcheck, hides the
     /// witness evaluations as well as omitting the witness.
     pub succinct_zk: Option<ZkOpeningProof>,
+    /// The commitment binding for the succinct opening: an inner-product
+    /// sumcheck and the disclosed bit-MLE evaluation, tying the proven-binary
+    /// witness to `accumulator.commitment`. Without it the succinct opening
+    /// proves *some* in-budget witness exists, not that it is the committed
+    /// one; this closes that gap. Present iff `succinct` or `succinct_zk` is.
+    pub binding: Option<(blacknet_crypto::sumcheck::Proof<F>, F)>,
     pub accumulator: Accumulator,
 }
 
@@ -248,11 +254,21 @@ pub fn prove_aggregate(
         opening: w.d,
         succinct: None,
         succinct_zk: None,
+        binding: None,
         accumulator: acc,
     })
 }
 
 /// Context binding the succinct opening to the accumulator it opens.
+/// Context for the commitment-binding sumcheck. A distinct tag (the leading
+/// sentinel) separates its Fiat-Shamir challenges from the opening's so the
+/// two arguments cannot be cross-replayed.
+fn binding_context(acc: &Accumulator) -> Vec<F> {
+    let mut ctx = vec![F::from(0xB1) /* binding-domain tag */];
+    ctx.extend(opening_context(acc));
+    ctx
+}
+
 fn opening_context(acc: &Accumulator) -> Vec<F> {
     let mut ctx = Vec::new();
     for k in 0..acc.commitment.dimension() {
@@ -275,8 +291,19 @@ pub fn prove_aggregate_succinct(
     let mut proof = prove_aggregate(shape, key, executions)?;
     let ctx = opening_context(&proof.accumulator);
     let argument = opening::prove(&proof.opening, &ctx);
+    // Commitment binding: tie the opened bits to accumulator.commitment via
+    // an inner-product sumcheck over the public map A·H. Uses a distinct
+    // transcript tag so its challenges do not collide with the opening's.
+    let bind_ctx = binding_context(&proof.accumulator);
+    let (bproof, beval, _t) = opening::prove_binding(
+        key.matrix(),
+        &proof.accumulator.commitment,
+        &proof.opening,
+        &bind_ctx,
+    );
     proof.opening_len = proof.opening.dimension();
     proof.succinct = Some(argument);
+    proof.binding = Some((bproof, beval));
     proof.opening = DenseVector::from(Vec::new());
     Ok(proof)
 }
@@ -292,8 +319,16 @@ pub fn prove_aggregate_succinct_zk(
     let mut proof = prove_aggregate(shape, key, executions)?;
     let ctx = opening_context(&proof.accumulator);
     let argument = opening::prove_zk(&proof.opening, &ctx);
+    let bind_ctx = binding_context(&proof.accumulator);
+    let (bproof, beval, _t) = opening::prove_binding(
+        key.matrix(),
+        &proof.accumulator.commitment,
+        &proof.opening,
+        &bind_ctx,
+    );
     proof.opening_len = proof.opening.dimension();
     proof.succinct_zk = Some(argument);
+    proof.binding = Some((bproof, beval));
     proof.opening = DenseVector::from(Vec::new());
     Ok(proof)
 }
@@ -329,6 +364,34 @@ pub fn prove_aggregate_zk(
 /// Verifies an aggregate: replays the folding transcript from public data
 /// (O(log T) per execution) and performs the single amortized opening.
 /// Never executes the program.
+/// Verifies the commitment binding that ties a succinct opening to
+/// `acc.commitment`. REQUIRED whenever a succinct opening is present: a
+/// succinct proof without a valid binding proves only that *some* in-budget
+/// witness exists, not that it is the committed one, so its absence is a
+/// verification failure, not an optional extra.
+fn verify_succinct_binding(
+    key: &CommitmentKey,
+    acc: &Accumulator,
+    proof: &AggregateProof,
+    n: usize,
+) -> Result<(), Error> {
+    let (bproof, beval) = proof
+        .binding
+        .as_ref()
+        .ok_or(Error::Fold(crate::hypernova::Error::Unsatisfied))?;
+    let nbits_padded = (n * crate::opening::OPENING_BITS as usize).next_power_of_two();
+    let bind_ctx = binding_context(acc);
+    opening::verify_binding(
+        key.matrix(),
+        &acc.commitment,
+        bproof,
+        *beval,
+        nbits_padded,
+        &bind_ctx,
+    )
+    .map_err(|_| Error::Fold(crate::hypernova::Error::Unsatisfied))
+}
+
 pub fn verify_aggregate(
     shape: &Shape,
     key: &CommitmentKey,
@@ -383,6 +446,7 @@ pub fn verify_aggregate(
         let ctx = opening_context(&acc);
         opening::verify_zk(argument, n, crate::witnesscommitment::MAX_NORM, &ctx)
             .map_err(|_| Error::Fold(crate::hypernova::Error::Unsatisfied))?;
+        verify_succinct_binding(key, &acc, proof, n)?;
         return Ok(());
     }
     if let Some(argument) = &proof.succinct {
@@ -395,6 +459,7 @@ pub fn verify_aggregate(
         let ctx = opening_context(&acc);
         opening::verify(argument, n, crate::witnesscommitment::MAX_NORM, &ctx)
             .map_err(|_| Error::Fold(crate::hypernova::Error::Unsatisfied))?;
+        verify_succinct_binding(key, &acc, proof, n)?;
         return Ok(());
     }
     open(

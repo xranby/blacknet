@@ -172,3 +172,50 @@ fn report() {
     println!("  attest millions of steps at fixed bytes and fixed verify time.");
     println!("===============================================================\n");
 }
+
+#[test]
+fn succinct_opening_size() {
+    use blacknet_snark::pipeline::{
+        Shape, prove_aggregate, prove_aggregate_succinct, prove_execution, verify_aggregate,
+    };
+    use blacknet_snark::witnesscommitment::CommitmentKey;
+    println!("\n--- SUCCINCT OPENING: proof size vs transparent (measured) ---");
+    let shape = Shape::derive(workload(64), &[f(2)], 1_000_000).unwrap();
+    let key = CommitmentKey::setup(shape.elements, 24);
+    println!(
+        "  {:>8} {:>16} {:>16} {:>10}",
+        "execs", "transparent B", "succinct B", "ratio"
+    );
+    for nexec in [2usize, 8, 32] {
+        let execs: Vec<_> = (0..nexec)
+            .map(|i| prove_execution(&shape, &key, &[f(i as i32 + 1)]).unwrap())
+            .collect();
+        let transparent = prove_aggregate(&shape, &key, &execs).unwrap();
+        let succinct = prove_aggregate_succinct(&shape, &key, &execs).unwrap();
+        assert!(verify_aggregate(&shape, &key, &succinct).is_ok());
+        // Size proxy: the opening witness (transparent) vs the succinct args.
+        let t_bytes = transparent.opening.dimension() * 8;
+        let s_witness = succinct.opening.dimension() * 8; // should be 0
+        let s_bind = succinct
+            .binding
+            .as_ref()
+            .map(|(p, _)| p.variables() * 3 * 8 + 8)
+            .unwrap_or(0);
+        let s_proj = succinct
+            .succinct
+            .as_ref()
+            .map(|o| o.projection.dimension() * 8 + o.binarity.variables() * 3 * 8)
+            .unwrap_or(0);
+        let s_total = s_witness + s_bind + s_proj;
+        println!(
+            "  {:>8} {:>16} {:>16} {:>9.2}x",
+            nexec,
+            t_bytes,
+            s_total,
+            t_bytes as f64 / s_total.max(1) as f64
+        );
+    }
+    println!("  (transparent = folded witness in the clear; succinct = JL");
+    println!("   projection + 2 log-size sumchecks, witness GONE. The crossover");
+    println!("   grows with trace length: more steps, bigger transparent win.)");
+}

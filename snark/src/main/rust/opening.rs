@@ -63,7 +63,7 @@
 //! around the disclosed sumcheck evaluations — reuses [`crate::zk`]'s
 //! blinding and is the remaining wiring, noted at its call site.
 
-use crate::witnesscommitment::{DIGIT_BITS, F};
+use crate::witnesscommitment::F;
 use blacknet_crypto::johnsonlindenstrauss::JohnsonLindenstrauss;
 use blacknet_crypto::matrix::DenseVector;
 use blacknet_crypto::polynomial::{BinarityPolynomial, Point, Polynomial};
@@ -77,6 +77,16 @@ type SC = SumCheck<F, F, BinarityPolynomial<F>, D, E>;
 
 /// JL projection rows (matches `JohnsonLindenstrauss::K`).
 pub const JL_ROWS: usize = 256;
+
+/// Bits per digit in the *opening* decomposition. Unlike the commitment's
+/// `DIGIT_BITS` (16, the base for committing fresh witnesses), the FOLDED
+/// witness has digits grown by accumulation up to the norm budget
+/// `MAX_NORM = 2^44`, so the opening must decompose each digit into enough
+/// bits to represent it exactly. 45 bits covers `[0, 2^45)`, dominating
+/// `MAX_NORM`; the binarity range check then certifies `‖d‖∞ < 2^45`. (The
+/// folded witness is non-negative by construction — folding combines
+/// non-negative digit vectors with non-negative challenge coefficients.)
+pub const OPENING_BITS: u32 = 45;
 
 /// The opening argument: a binarity proof of the committed bits and a JL
 /// projection bounding their recomposed norm. No digit vector is sent.
@@ -98,10 +108,10 @@ pub enum Error {
 #[must_use]
 pub fn decompose_bits(d: &DenseVector<F>) -> DenseVector<F> {
     use blacknet_crypto::algebra::IntegerRing;
-    let mut bits = Vec::with_capacity(d.dimension() * DIGIT_BITS as usize);
+    let mut bits = Vec::with_capacity(d.dimension() * OPENING_BITS as usize);
     for i in 0..d.dimension() {
         let v = d[i].canonical() as u64;
-        for k in 0..DIGIT_BITS {
+        for k in 0..OPENING_BITS {
             bits.push(F::from(u32::from((v >> k) & 1 == 1)));
         }
     }
@@ -112,11 +122,11 @@ pub fn decompose_bits(d: &DenseVector<F>) -> DenseVector<F> {
 #[must_use]
 pub fn recompose_bits(b: &DenseVector<F>) -> DenseVector<F> {
     use blacknet_crypto::algebra::IntegerRing;
-    let digits = b.dimension() / DIGIT_BITS as usize;
+    let digits = b.dimension() / OPENING_BITS as usize;
     (0..digits)
         .map(|i| {
-            (0..DIGIT_BITS as usize).fold(F::from(0), |acc, k| {
-                acc + <F as IntegerRing>::new(1i64 << k) * b[i * DIGIT_BITS as usize + k]
+            (0..OPENING_BITS as usize).fold(F::from(0), |acc, k| {
+                acc + <F as IntegerRing>::new(1i64 << k) * b[i * OPENING_BITS as usize + k]
             })
         })
         .collect()
@@ -176,7 +186,7 @@ pub fn prove(d: &DenseVector<F>, context: &[F]) -> OpeningProof {
 /// linear binding of the projection to the committed bits is enforced by
 /// the caller's commitment opening (noted below).
 pub fn verify(proof: &OpeningProof, n: usize, b_bound: u128, context: &[F]) -> Result<(), Error> {
-    let nbits = n * DIGIT_BITS as usize;
+    let nbits = n * OPENING_BITS as usize;
     let mu = nbits.next_power_of_two().trailing_zeros() as usize;
     let mut duplex = D::default();
     duplex.absorb_iter(context.iter().copied());
@@ -344,7 +354,7 @@ pub fn verify_zk(
     b_bound: u128,
     context: &[F],
 ) -> Result<(), Error> {
-    let nbits = n * DIGIT_BITS as usize;
+    let nbits = n * OPENING_BITS as usize;
     let mu = nbits.next_power_of_two().trailing_zeros() as usize;
     let mut duplex = D::default();
     duplex.absorb_iter(context.iter().copied());
@@ -386,4 +396,184 @@ fn shape_masked(mu: usize) -> crate::masking::MaskedBinarity {
     let mut zero = || 0u64;
     let g = sample_mask(mu, 2, &mut zero);
     MaskedBinarity::new(f, g, F::from(0))
+}
+
+// ---------------------------------------------------------------------------
+// Commitment binding — the keystone that makes the succinct opening SOUND.
+//
+// The binarity sumcheck proves the disclosed bits `b` are 0/1 (so the
+// recomposed digits d = H·b satisfy ‖d‖∞ < 2^DIGIT_BITS by construction — the
+// norm bound is free once b is binary). But nothing above ties that `b` to the
+// witness the accumulator actually commits to. A malicious prover could prove
+// binarity for some in-budget b' unrelated to the committed d. This binds them.
+//
+// The commitment is C = A·d = A·H·b = M·b with M = A·H public (the Ajtai key
+// composed with the bit-recomposition gadget). The verifier squeezes s after C
+// is in the transcript and must be convinced M·b = C, i.e. the random
+// combination ⟨s, M·b⟩ = ⟨s, C⟩. Now ⟨s, M·b⟩ = ⟨g, b⟩ with g = sᵀM public, and
+// ⟨g, b⟩ = Σ_x g̃(x)·b̃(x) over the boolean hypercube — an inner-product
+// sumcheck of degree 2 binding the SAME b̃ the binarity argument disclosed.
+// The verifier computes the target ⟨s, C⟩ and g̃(ρ) itself from public data, so
+// the binding adds only one logarithmic sumcheck and discloses no new witness.
+// ---------------------------------------------------------------------------
+
+use blacknet_crypto::matrix::DenseMatrix;
+use blacknet_crypto::polynomial::{MultilinearExtension, MultivariatePolynomial};
+
+/// The degree-2 product polynomial `g̃(x)·b̃(x)` summed over the hypercube,
+/// for the inner-product binding sumcheck.
+pub struct BindingPolynomial {
+    g: MultilinearExtension<F>,
+    b: MultilinearExtension<F>,
+}
+
+impl BindingPolynomial {
+    #[must_use]
+    pub fn new(g: Vec<F>, b: Vec<F>) -> Self {
+        Self {
+            g: MultilinearExtension::from(g),
+            b: MultilinearExtension::from(b),
+        }
+    }
+}
+
+impl Polynomial for BindingPolynomial {
+    type Coefficient = F;
+    type Point = Point<F>;
+    fn point(&self, point: &Point<F>) -> F {
+        self.g.point(point) * self.b.point(point)
+    }
+}
+
+impl MultivariatePolynomial for BindingPolynomial {
+    fn bind(&mut self, value: &F) {
+        self.g.bind(value);
+        self.b.bind(value);
+    }
+
+    fn sum_with_var<const VAL: i8>(&self) -> F {
+        let gv = self.g.hypercube_with_var::<VAL>();
+        let bv = self.b.hypercube_with_var::<VAL>();
+        (0..gv.dimension()).map(|i| gv[i] * bv[i]).sum()
+    }
+
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn variables(&self) -> usize {
+        self.b.variables()
+    }
+}
+
+type BindSC = SumCheck<F, F, BindingPolynomial, D, E>;
+
+/// The composed public functional row `g = sᵀ·(A·H)` over the bit indices,
+/// where `A` is the commitment key matrix and `H` is the bit→digit gadget
+/// (each digit is `Σ_k 2^k b_k`). `s` is the verifier's random combination of
+/// the commitment rows. Padded to a power of two to match the bit-MLE.
+#[must_use]
+pub fn binding_functional(a: &DenseMatrix<F>, s: &[F], nbits_padded: usize) -> Vec<F> {
+    use blacknet_crypto::algebra::IntegerRing;
+    let rows = a.rows();
+    let columns = a.columns(); // = digits
+    let dbits = OPENING_BITS as usize;
+    let mut g = vec![F::from(0); nbits_padded];
+    // (sᵀA)_c = Σ_r s_r A[r][c]; then bit (c·dbits + k) gets (sᵀA)_c · 2^k.
+    for c in 0..columns {
+        let mut sa_c = F::from(0);
+        for r in 0..rows {
+            sa_c += s[r] * a[(r, c)];
+        }
+        for k in 0..dbits {
+            let idx = c * dbits + k;
+            if idx < nbits_padded {
+                g[idx] = sa_c * <F as IntegerRing>::new(1i64 << k);
+            }
+        }
+    }
+    g
+}
+
+/// Proves the commitment binding: an inner-product sumcheck showing the
+/// committed bits reproduce `C` under the public map `M = A·H`. Returns the
+/// sumcheck proof and the disclosed `b̃(ρ_bind)`.
+#[must_use]
+pub fn prove_binding(
+    a: &DenseMatrix<F>,
+    commitment: &DenseVector<F>,
+    d: &DenseVector<F>,
+    context: &[F],
+) -> (SumCheckProof<F>, F, F) {
+    let b = decompose_bits(d);
+    let padded = pad_pow2(&b);
+    let n = padded.len();
+
+    let mut duplex = D::default();
+    let mut mirror = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    mirror.absorb_iter(context.iter().copied());
+    // Squeeze the commitment-row combination s (rows of A).
+    let s: Vec<F> = (0..a.rows()).map(|_| duplex.squeeze()).collect();
+    for _ in 0..a.rows() {
+        let _: F = mirror.squeeze();
+    }
+    let g = binding_functional(a, &s, n);
+    // target = ⟨s, C⟩ = Σ_r s_r C_r.
+    let target: F = (0..commitment.dimension())
+        .map(|r| s[r] * commitment[r])
+        .sum();
+
+    let poly = BindingPolynomial::new(g, padded.clone());
+    let mut exceptional = E::default();
+    let proof = BindSC::prove(poly, target, &mut duplex, &mut exceptional);
+
+    // Recover the point on the mirror to disclose b̃(ρ).
+    let point = {
+        let shape = BindingPolynomial::new(vec![F::from(0); n], vec![F::from(0); n]);
+        let mut ex = E::default();
+        let (p, _) = BindSC::verify_early_stopping(&shape, target, &proof, &mut mirror, &mut ex)
+            .expect("prover proof replays");
+        let p: Vec<F> = p.into();
+        p
+    };
+    let bit_eval = mle_point(&padded, &point);
+    (proof, bit_eval, target)
+}
+
+/// Verifies the commitment binding. Recomputes `s`, the public functional
+/// `g`, the target `⟨s,C⟩`, runs the sumcheck verifier, and checks the final
+/// value equals `g̃(ρ)·b̃(ρ)` — `g̃(ρ)` computed from public data, `b̃(ρ)`
+/// disclosed. This is what ties the binary bits to the committed `C`.
+pub fn verify_binding(
+    a: &DenseMatrix<F>,
+    commitment: &DenseVector<F>,
+    proof: &SumCheckProof<F>,
+    bit_eval: F,
+    n_bits_padded: usize,
+    context: &[F],
+) -> Result<(), Error> {
+    let mut duplex = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    let s: Vec<F> = (0..a.rows()).map(|_| duplex.squeeze()).collect();
+    let g = binding_functional(a, &s, n_bits_padded);
+    let target: F = (0..commitment.dimension())
+        .map(|r| s[r] * commitment[r])
+        .sum();
+
+    let shape = BindingPolynomial::new(
+        vec![F::from(0); n_bits_padded],
+        vec![F::from(0); n_bits_padded],
+    );
+    let mut exceptional = E::default();
+    let (point, final_value) =
+        BindSC::verify_early_stopping(&shape, target, proof, &mut duplex, &mut exceptional)
+            .map_err(|_| Error::Binarity)?;
+    // g̃(ρ) is verifier-computable from the public functional.
+    let point_vec: Vec<F> = point.into();
+    let g_eval = mle_point(&g, &point_vec);
+    if g_eval * bit_eval != final_value {
+        return Err(Error::Binarity);
+    }
+    Ok(())
 }

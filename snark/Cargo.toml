@@ -131,3 +131,7 @@ path = "src/test/rust/merkle_circuit.rs"
 [[test]]
 name = "measurements"
 path = "src/test/rust/measurements.rs"
+
+[[test]]
+name = "opening_binding"
+path = "src/test/rust/opening_binding.rs"
