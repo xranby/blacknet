@@ -219,3 +219,59 @@ fn succinct_opening_size() {
     println!("   projection + 2 log-size sumchecks, witness GONE. The crossover");
     println!("   grows with trace length: more steps, bigger transparent win.)");
 }
+
+#[test]
+fn reference_form_bandwidth() {
+    use blacknet_snark::commitment::commit;
+    use blacknet_snark::proof::prove;
+    use blacknet_snark::wire::{encode_compute, encode_reference};
+    println!("\n--- REFERENCE-FORM BANDWIDTH (program already on chain) ---");
+    println!("  reference payload = id(32B) + IO + proof(version+pc_trace+witness)");
+    println!(
+        "  {:>6} {:>6} {:>10} {:>10} {:>10} {:>10} {:>10}",
+        "iters", "steps", "inline B", "ref B", "id+IO B", "trace B", "witness B"
+    );
+    for iters in [1usize, 8, 64, 512] {
+        let prog = workload(iters);
+        let (io, proof) = prove(&prog, &[], 10_000_000).unwrap();
+        let id = commit(&prog);
+        let inline = encode_compute(&prog, &io, &proof).len();
+        let reference = encode_reference(&id, &io, &proof).len();
+        let idio = 1 + 4 * 8 + (io.inputs.len() + io.outputs.len()) * 8 + 1; // ver+id+IO+proofver
+        let trace = proof.pc_trace.len() * 4;
+        let witness = proof.witness.len() * 8;
+        println!(
+            "  {:>6} {:>6} {:>10} {:>10} {:>10} {:>10} {:>10}",
+            iters,
+            proof.pc_trace.len(),
+            inline,
+            reference,
+            idio,
+            trace,
+            witness
+        );
+    }
+    // What the reference form WOULD be once the succinct opening (measured
+    // 2920 B, constant in folds) replaces the transparent witness+trace.
+    let prog = workload(64);
+    let (io, _proof) = prove(&prog, &[], 10_000_000).unwrap();
+    let idio = 1 + 4 * 8 + (io.inputs.len() + io.outputs.len()) * 8 + 1;
+    let succinct_proof = 2920usize; // measured in succinct_opening_size
+    println!();
+    println!("  PROJECTED reference + succinct opening (NOT yet wired to wire.rs):");
+    println!("    id+IO framing      : {:>6} B", idio);
+    println!(
+        "    succinct proof     : {:>6} B  (constant in steps AND folds)",
+        succinct_proof
+    );
+    println!(
+        "    => reference packet: {:>6} B  vs {} B transparent-reference at 132 steps",
+        idio + succinct_proof,
+        encode_reference(
+            &commit(&workload(64)),
+            &io,
+            &prove(&workload(64), &[], 10_000_000).unwrap().1
+        )
+        .len()
+    );
+}
