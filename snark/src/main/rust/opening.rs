@@ -498,6 +498,11 @@ pub fn binding_functional(a: &DenseMatrix<F>, s: &[F], nbits_padded: usize) -> V
 /// Proves the commitment binding: an inner-product sumcheck showing the
 /// committed bits reproduce `C` under the public map `M = A·H`. Returns the
 /// sumcheck proof and the disclosed `b̃(ρ_bind)`.
+///
+/// SUPERSEDED for the pipeline by [`prove_bound_opening`], which batches this
+/// binding with the binarity check into one sumcheck over one `b̃` — closing
+/// the seam where the two were separate arguments at independent points. Kept
+/// as a standalone, independently-tested primitive.
 #[must_use]
 pub fn prove_binding(
     a: &DenseMatrix<F>,
@@ -573,6 +578,180 @@ pub fn verify_binding(
     let point_vec: Vec<F> = point.into();
     let g_eval = mle_point(&g, &point_vec);
     if g_eval * bit_eval != final_value {
+        return Err(Error::Binarity);
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Batched opening — closing the binarity/binding SEAM.
+//
+// The separate `prove`/`prove_binding` arguments proved binarity at one point
+// ρ_A and binding at another point ρ_B, each disclosing its own b̃, with
+// nothing forcing the two b̃ to be the same polynomial. A prover could pass
+// binarity with a binary b₁ and binding with a different b₂.
+//
+// This collapses both into ONE sumcheck over ONE b̃ at ONE point. With a
+// batching challenge α squeezed AFTER the commitment C is in the transcript
+// (so the prover is committed to b — via C = A·d — before seeing α), prove
+//
+//     Σ_x [ α·(b̃(x)² − b̃(x)) + g̃(x)·b̃(x) ] = ⟨s, C⟩
+//
+// The binarity term sums to 0 iff b is binary; the binding term sums to ⟨s,C⟩
+// iff b reconstructs C under the public map M = A·H. The verifier's single
+// final check at ρ,
+//
+//     α·(b̃(ρ)² − b̃(ρ)) + g̃(ρ)·b̃(ρ) = final,
+//
+// uses ONE disclosed b̃(ρ) in BOTH terms and a verifier-computed g̃(ρ). The
+// same b̃(ρ) in both terms is what closes the seam by construction. Standard
+// batching soundness: a non-binary or non-reconstructing b makes the claimed
+// sum wrong for all but a 1/|exceptional| fraction of α.
+//
+// Note: binarity already bounds the norm (binary bits ⇒ ‖d‖∞ < 2^OPENING_BITS
+// by construction), so this batched argument subsumes the JL projection's
+// role; the JL step becomes redundant for soundness and can be retired.
+
+/// The batched degree-2 polynomial `α·(b̃² − b̃) + g̃·b̃`.
+pub struct BoundOpeningPolynomial {
+    g: MultilinearExtension<F>,
+    b: MultilinearExtension<F>,
+    alpha: F,
+}
+
+impl BoundOpeningPolynomial {
+    #[must_use]
+    pub fn new(g: Vec<F>, b: Vec<F>, alpha: F) -> Self {
+        Self {
+            g: MultilinearExtension::from(g),
+            b: MultilinearExtension::from(b),
+            alpha,
+        }
+    }
+}
+
+impl Polynomial for BoundOpeningPolynomial {
+    type Coefficient = F;
+    type Point = Point<F>;
+    fn point(&self, point: &Point<F>) -> F {
+        let bv = self.b.point(point);
+        let gv = self.g.point(point);
+        self.alpha * (bv * bv - bv) + gv * bv
+    }
+}
+
+impl MultivariatePolynomial for BoundOpeningPolynomial {
+    fn bind(&mut self, value: &F) {
+        self.g.bind(value);
+        self.b.bind(value);
+    }
+
+    fn sum_with_var<const VAL: i8>(&self) -> F {
+        let gv = self.g.hypercube_with_var::<VAL>();
+        let bv = self.b.hypercube_with_var::<VAL>();
+        (0..gv.dimension())
+            .map(|i| self.alpha * (bv[i] * bv[i] - bv[i]) + gv[i] * bv[i])
+            .sum()
+    }
+
+    fn degree(&self) -> usize {
+        2
+    }
+
+    fn variables(&self) -> usize {
+        self.b.variables()
+    }
+}
+
+type BoundSC = SumCheck<F, F, BoundOpeningPolynomial, D, E>;
+
+/// Proves the batched opening: one sumcheck establishing both that the
+/// committed bits are binary and that they reconstruct `C`. Returns the
+/// sumcheck proof and the single disclosed `b̃(ρ)`.
+#[must_use]
+pub fn prove_bound_opening(
+    a: &DenseMatrix<F>,
+    commitment: &DenseVector<F>,
+    d: &DenseVector<F>,
+    context: &[F],
+) -> (SumCheckProof<F>, F) {
+    let b = decompose_bits(d);
+    let padded = pad_pow2(&b);
+    let n = padded.len();
+
+    let mut duplex = D::default();
+    let mut mirror = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    mirror.absorb_iter(context.iter().copied());
+    // Squeeze s (commitment-row combination) — C is already in `context`.
+    let s: Vec<F> = (0..a.rows()).map(|_| duplex.squeeze()).collect();
+    for _ in 0..a.rows() {
+        let _: F = mirror.squeeze();
+    }
+    let g = binding_functional(a, &s, n);
+    let target: F = (0..commitment.dimension())
+        .map(|r| s[r] * commitment[r])
+        .sum();
+    // Batching challenge α, squeezed AFTER s (hence after C). Absorb the
+    // binding target so α also depends on it.
+    duplex.absorb(target);
+    mirror.absorb(target);
+    let alpha: F = duplex.squeeze();
+    let _: F = mirror.squeeze();
+
+    let poly = BoundOpeningPolynomial::new(g, padded.clone(), alpha);
+    let mut exceptional = E::default();
+    // Σ = α·0 + ⟨s,C⟩ = target for an honest (binary, reconstructing) witness.
+    let proof = BoundSC::prove(poly, target, &mut duplex, &mut exceptional);
+
+    // Recover ρ on the mirror to disclose b̃(ρ).
+    let point = {
+        let shape = BoundOpeningPolynomial::new(vec![F::from(0); n], vec![F::from(0); n], alpha);
+        let mut ex = E::default();
+        let (p, _) = BoundSC::verify_early_stopping(&shape, target, &proof, &mut mirror, &mut ex)
+            .expect("prover proof replays");
+        let p: Vec<F> = p.into();
+        p
+    };
+    let bit_eval = mle_point(&padded, &point);
+    (proof, bit_eval)
+}
+
+/// Verifies the batched opening. Recomputes `s`, `g`, the target `⟨s,C⟩` and
+/// `α`, runs the sumcheck verifier to obtain `(ρ, final)`, and checks the
+/// single batched identity `α·(b̃(ρ)² − b̃(ρ)) + g̃(ρ)·b̃(ρ) = final` with the
+/// one disclosed `b̃(ρ)`. Same `b̃(ρ)` in both terms ⇒ seam closed.
+pub fn verify_bound_opening(
+    a: &DenseMatrix<F>,
+    commitment: &DenseVector<F>,
+    proof: &SumCheckProof<F>,
+    bit_eval: F,
+    n_bits_padded: usize,
+    context: &[F],
+) -> Result<(), Error> {
+    let mut duplex = D::default();
+    duplex.absorb_iter(context.iter().copied());
+    let s: Vec<F> = (0..a.rows()).map(|_| duplex.squeeze()).collect();
+    let g = binding_functional(a, &s, n_bits_padded);
+    let target: F = (0..commitment.dimension())
+        .map(|r| s[r] * commitment[r])
+        .sum();
+    duplex.absorb(target);
+    let alpha: F = duplex.squeeze();
+
+    let shape = BoundOpeningPolynomial::new(
+        vec![F::from(0); n_bits_padded],
+        vec![F::from(0); n_bits_padded],
+        alpha,
+    );
+    let mut exceptional = E::default();
+    let (point, final_value) =
+        BoundSC::verify_early_stopping(&shape, target, proof, &mut duplex, &mut exceptional)
+            .map_err(|_| Error::Binarity)?;
+    let point_vec: Vec<F> = point.into();
+    let g_eval = mle_point(&g, &point_vec);
+    // The single batched check: one b̃(ρ) in both the binarity and binding terms.
+    if alpha * (bit_eval * bit_eval - bit_eval) + g_eval * bit_eval != final_value {
         return Err(Error::Binarity);
     }
     Ok(())

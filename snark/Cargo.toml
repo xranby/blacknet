@@ -139,3 +139,7 @@ path = "src/test/rust/opening_binding.rs"
 [[test]]
 name = "review_splice"
 path = "src/test/rust/review_splice.rs"
+
+[[test]]
+name = "bound_opening"
+path = "src/test/rust/bound_opening.rs"

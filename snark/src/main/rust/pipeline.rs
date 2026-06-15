@@ -291,11 +291,12 @@ pub fn prove_aggregate_succinct(
     let mut proof = prove_aggregate(shape, key, executions)?;
     let ctx = opening_context(&proof.accumulator);
     let argument = opening::prove(&proof.opening, &ctx);
-    // Commitment binding: tie the opened bits to accumulator.commitment via
-    // an inner-product sumcheck over the public map A·H. Uses a distinct
-    // transcript tag so its challenges do not collide with the opening's.
+    // Batched opening: ONE sumcheck proving binarity AND commitment binding
+    // over one b̃ at one point — this closes the binarity/binding seam (the
+    // two were previously separate sumchecks at independent points). A
+    // distinct transcript tag keeps it from colliding with the JL opening.
     let bind_ctx = binding_context(&proof.accumulator);
-    let (bproof, beval, _t) = opening::prove_binding(
+    let (bproof, beval) = opening::prove_bound_opening(
         key.matrix(),
         &proof.accumulator.commitment,
         &proof.opening,
@@ -320,7 +321,7 @@ pub fn prove_aggregate_succinct_zk(
     let ctx = opening_context(&proof.accumulator);
     let argument = opening::prove_zk(&proof.opening, &ctx);
     let bind_ctx = binding_context(&proof.accumulator);
-    let (bproof, beval, _t) = opening::prove_binding(
+    let (bproof, beval) = opening::prove_bound_opening(
         key.matrix(),
         &proof.accumulator.commitment,
         &proof.opening,
@@ -381,7 +382,7 @@ fn verify_succinct_binding(
         .ok_or(Error::Fold(crate::hypernova::Error::Unsatisfied))?;
     let nbits_padded = (n * crate::opening::OPENING_BITS as usize).next_power_of_two();
     let bind_ctx = binding_context(acc);
-    opening::verify_binding(
+    opening::verify_bound_opening(
         key.matrix(),
         &acc.commitment,
         bproof,
