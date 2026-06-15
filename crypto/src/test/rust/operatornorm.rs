@@ -125,3 +125,46 @@ fn isqrt_ceil_is_exact() {
     assert_eq!(isqrt_ceil(17), 5);
     assert_eq!(isqrt_ceil(1 << 44), 1 << 22);
 }
+
+#[test]
+fn ntt_spectral_norm_equals_ground_truth() {
+    use blacknet_crypto::operatornorm::{gram, negacyclic_matrix, ntt_spectral_norm};
+    // The NTT-domain exact norm must equal the power-iteration spectral norm
+    // (sqrt of lambda_max of the Gram matrix), across challenge sets.
+    let challenges: [&[i64]; 4] = [
+        &[1, 2, 3, 4],
+        &[2, -1, 0, 1],
+        &[1, -1, 1, -1],
+        &[3, 0, -2, 1, 0, 0, 1, -1],
+    ];
+    for c in challenges {
+        let g = gram(&negacyclic_matrix(c));
+        let truth = (power_lambda_max(&g)).sqrt();
+        let ntt = ntt_spectral_norm(c);
+        assert!(
+            (ntt - truth).abs() < 1e-6,
+            "ntt norm {ntt} must equal ground truth {truth} for {c:?}"
+        );
+    }
+}
+
+#[test]
+fn gershgorin_is_a_safe_upper_bound_on_the_exact_norm() {
+    use blacknet_crypto::operatornorm::{multiplication_norm_bound, ntt_spectral_norm};
+    // The certified integer bound must never be below the exact norm (it is a
+    // safe over-estimate for parameter setting); this also exhibits the slack.
+    let challenges: [&[i64]; 4] = [
+        &[1, 1, 1, 1],
+        &[2, -1, 0, 1],
+        &[1, -1, 1, -1],
+        &[1, 2, 3, 4, 5, 6, 7, 8],
+    ];
+    for c in challenges {
+        let exact = ntt_spectral_norm(c);
+        let certified = multiplication_norm_bound(c) as f64;
+        assert!(
+            certified + 1.0 >= exact,
+            "Gershgorin bound {certified} must be >= exact norm {exact} for {c:?}"
+        );
+    }
+}

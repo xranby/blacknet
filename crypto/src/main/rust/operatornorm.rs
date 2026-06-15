@@ -305,3 +305,52 @@ pub fn matrix_multiplication_norm_bound(a: &MatrixRingElement) -> u128 {
 pub fn commutator_norm_bound(a: &MatrixRingElement, b: &MatrixRingElement) -> u128 {
     matrix_multiplication_norm_bound(&commutator(a, b))
 }
+
+// ---------------------------------------------------------------------------
+// Exact spectral norm via negacyclic evaluations (the NTT-domain view).
+//
+// Following the NTT-smooth ring signal (rat4 wired `batched_inv` into
+// `NTTRing::inv`, where fully-split multiplication is pointwise), there is a
+// second, EXACT route to the per-fold expansion. For `Z[X]/(Xⁿ+1)`, the
+// eigenvalues of multiplication-by-`c` are exactly its evaluations at the `n`
+// negacyclic points `ωₖ = exp(iπ(2k+1)/n)` (the odd 2n-th roots of unity), so
+//
+//     ‖M_c‖₂ = maxₖ |ĉ(ωₖ)|   exactly,
+//
+// not merely an upper bound. The integer Gershgorin bound above is the
+// certified estimate available from coefficients alone; this is the tight
+// value the NTT representation hands over directly. Over the LM modulus the
+// *integer* transform only partially splits (q−1 has 2-adic valuation 5, so a
+// length-64 cyclic NTT does not exist), but the *real* operator norm is a
+// statement about complex evaluations and holds for any degree — which is why
+// this is computed over the complex unit circle, independent of the modulus.
+//
+// Used together: Gershgorin certifies a safe upper bound for parameter
+// setting; this exact value shows how much slack the bound carries (and for
+// the structured challenge sets folding uses, the two are typically close).
+
+/// The exact operator (spectral) norm of multiplication by a challenge with
+/// the given integer coefficients in `Z[X]/(Xⁿ+1)`, computed as the maximum
+/// magnitude of its evaluations at the `n` negacyclic points. Returned as an
+/// `f64` (this is real-analytic, not an integer theorem); pair it with
+/// [`multiplication_norm_bound`] for the certified integer upper bound.
+#[must_use]
+pub fn ntt_spectral_norm(coeffs: &[i64]) -> f64 {
+    let n = coeffs.len();
+    let mut max_sq = 0.0f64;
+    for k in 0..n {
+        // ωₖ = exp(iπ(2k+1)/n); accumulate ĉ(ωₖ) = Σ_j c_j ωₖ^j.
+        let theta = core::f64::consts::PI * (2.0 * k as f64 + 1.0) / n as f64;
+        let (mut re, mut im) = (0.0f64, 0.0f64);
+        for (j, &cj) in coeffs.iter().enumerate() {
+            let ang = theta * j as f64;
+            re += cj as f64 * libm::cos(ang);
+            im += cj as f64 * libm::sin(ang);
+        }
+        let mag_sq = re * re + im * im;
+        if mag_sq > max_sq {
+            max_sq = mag_sq;
+        }
+    }
+    libm::sqrt(max_sq)
+}
