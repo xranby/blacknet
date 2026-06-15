@@ -251,27 +251,36 @@ fn reference_form_bandwidth() {
             witness
         );
     }
-    // What the reference form WOULD be once the succinct opening (measured
-    // 2920 B, constant in folds) replaces the transparent witness+trace.
-    let prog = workload(64);
-    let (io, _proof) = prove(&prog, &[], 10_000_000).unwrap();
-    let idio = 1 + 4 * 8 + (io.inputs.len() + io.outputs.len()) * 8 + 1;
-    let succinct_proof = 2920usize; // measured in succinct_opening_size
+    // MEASURED: the succinct reference form now wired through the real codec
+    // (encode_reference_succinct). Packet is ~constant in trace length.
+    use blacknet_snark::pipeline::{Shape, prove_aggregate_succinct, prove_execution};
+    use blacknet_snark::wire::encode_reference_succinct;
+    use blacknet_snark::witnesscommitment::{CommitmentKey, SECURE_ROWS};
     println!();
-    println!("  PROJECTED reference + succinct opening (NOT yet wired to wire.rs):");
-    println!("    id+IO framing      : {:>6} B", idio);
+    println!("  MEASURED reference + succinct opening (wired, encode_reference_succinct):");
     println!(
-        "    succinct proof     : {:>6} B  (constant in steps AND folds)",
-        succinct_proof
+        "  {:>8} {:>18} {:>18}",
+        "steps", "transparent ref B", "succinct ref B"
     );
-    println!(
-        "    => reference packet: {:>6} B  vs {} B transparent-reference at 132 steps",
-        idio + succinct_proof,
-        encode_reference(
-            &commit(&workload(64)),
-            &io,
-            &prove(&workload(64), &[], 10_000_000).unwrap().1
-        )
-        .len()
-    );
+    for iters in [64usize, 512, 1500] {
+        let prog = workload(iters);
+        let shape = Shape::derive(prog.clone(), &[], 20_000_000).unwrap();
+        let key = CommitmentKey::setup(shape.elements, SECURE_ROWS);
+        let exec = prove_execution(&shape, &key, &[]).unwrap();
+        let agg = prove_aggregate_succinct(&shape, &key, &[exec]).unwrap();
+        let id = commit(&prog);
+        let succinct_ref = encode_reference_succinct(&id, &agg).unwrap().len();
+        let (io, p) = prove(&prog, &[], 20_000_000).unwrap();
+        let transparent_ref = encode_reference(&id, &io, &p).len();
+        let steps = p.pc_trace.len();
+        let win = if succinct_ref < transparent_ref {
+            "succinct wins"
+        } else {
+            "transparent wins"
+        };
+        println!(
+            "  {:>8} {:>18} {:>18}   {}",
+            steps, transparent_ref, succinct_ref, win
+        );
+    }
 }
