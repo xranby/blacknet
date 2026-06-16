@@ -78,6 +78,7 @@ impl TxDataInfo {
             TxKind::VerifiedComputation => to_value(VerifiedComputationInfo::new(data)?)?,
             TxKind::DeployProgram => to_value(DeployProgramInfo::new(data)?)?,
             TxKind::ComputeReference => to_value(ComputeReferenceInfo::new(data)?)?,
+            TxKind::ComputeReferenceSuccinct => to_value(ComputeReferenceSuccinctInfo::new(data)?)?,
             TxKind::WithdrawFromLease => {
                 to_value(WithdrawFromLeaseInfo::new(data, address_codec)?)?
             }

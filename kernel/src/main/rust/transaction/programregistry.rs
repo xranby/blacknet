@@ -220,6 +220,11 @@ impl ComputeReferenceSuccinct {
     pub const fn new(payload: Box<[u8]>) -> Self {
         Self { payload }
     }
+
+    #[must_use]
+    pub const fn payload(&self) -> &[u8] {
+        &self.payload
+    }
 }
 
 impl TxData for ComputeReferenceSuccinct {
