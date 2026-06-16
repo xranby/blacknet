@@ -219,3 +219,95 @@ pub fn recover_d(rlwe: &Rlwe, enc_d: &Ct) -> Vec<i32> {
 pub fn oblivious_scan(key: &EncryptedDetectionKey, board: &[Clue]) -> Vec<Ct> {
     board.iter().map(|c| homomorphic_decrypt(key, c)).collect()
 }
+
+// ===========================================================================
+// Gadget-based RLWE key-switching.
+//
+// The foundational HE primitive the crate was missing, built on the
+// pre-positioned `latticegadget` (gadget decomposition, eprint 2018/946).
+// Key-switching transforms a ciphertext that decrypts under one secret into
+// one that decrypts under another, WITHOUT decrypting — the building block of
+// FHE ciphertext maintenance and the outer loop of bootstrapping (blind
+// rotation is key-switching + external products). Here it extends the leveled
+// RLWE above.
+//
+// Identity used: for the gadget radix `B` and `digits` limbs, decomposing a
+// ring element `a` gives small `a_i` with `Σ a_i Bⁱ = a`. A key-switch key
+// from `s` to `s'` is `KSK_i = RLWE_{s'}(raw: Bⁱ·s)`, i.e.
+// `KSK_i.b − KSK_i.a·s' = Bⁱ·s + e_i`. Then for `(a,b)` with
+// `b − a·s = Δm + e`, setting `b' = b − Σ a_i·KSK_i.b`,
+// `a' = −Σ a_i·KSK_i.a` gives `b' − a'·s' = Δm + e − Σ a_i·e_i`, decryptable
+// under `s'` because `Σ a_i·e_i` stays within the noise budget (the `a_i` are
+// gadget digits bounded by `B`).
+// ===========================================================================
+
+use crate::latticegadget::decompose_polynomial;
+use alloc::vec::Vec as KsVec;
+
+/// Gadget radix bits and digit count: `DIGITS·DIGIT_BITS = 64 ≥ ⌈log2 Q⌉`.
+const DIGIT_BITS: i64 = 16;
+const DIGITS: usize = 4;
+const RADIX_MASK: i64 = (1i64 << DIGIT_BITS) - 1;
+
+impl Rlwe {
+    /// Encrypt a ring element as a *raw* payload (not Δ-scaled): the result
+    /// decrypts-without-rounding to the payload plus small noise. Used to
+    /// encrypt the gadget-scaled old key inside a key-switch key.
+    fn encrypt_raw<R: UniformGenerator<Output = u8>>(&self, rng: &mut R, payload: &Rq) -> Ct {
+        let a = Self::uniform(rng);
+        let e = Self::error(rng);
+        let b = a * self.s + *payload + e;
+        Ct { a, b }
+    }
+
+    /// The secret as a ring element (for building a key-switch key to it).
+    fn secret(&self) -> Rq {
+        self.s
+    }
+}
+
+/// A key-switch key from one RLWE secret to another.
+pub struct KeySwitchKey {
+    ksk: KsVec<Ct>, // length DIGITS; ksk[i] = Enc_{new}(raw: B^i · s_old)
+}
+
+/// Build a key-switch key taking ciphertexts under `old` to ciphertexts under
+/// `new`. Reveals nothing about either secret (the old key is encrypted under
+/// the new one).
+pub fn keyswitch_keygen<R: UniformGenerator<Output = u8>>(
+    rng: &mut R,
+    old: &Rlwe,
+    new: &Rlwe,
+) -> KeySwitchKey {
+    let s_old = old.secret();
+    let mut ksk = KsVec::with_capacity(DIGITS);
+    let mut power: i64 = 1;
+    for _ in 0..DIGITS {
+        // payload = (B^i) · s_old, scalar B^i lifted to a constant polynomial.
+        let scalar: Rq = LMField::new(power).into();
+        let payload = scalar * s_old;
+        ksk.push(new.encrypt_raw(rng, &payload));
+        power = power.wrapping_mul(1i64 << DIGIT_BITS);
+    }
+    KeySwitchKey { ksk }
+}
+
+/// Key-switch a ciphertext to the new secret. Output decrypts under `new` to
+/// the same message (with a little added noise from the gadget digits).
+#[must_use]
+pub fn keyswitch(ksk: &KeySwitchKey, ct: &Ct) -> Ct {
+    // Decompose a into DIGITS gadget limbs (each a small ring element).
+    let digits = decompose_polynomial::<LMField, Rq>(&ct.a, RADIX_MASK, DIGIT_BITS, DIGITS);
+    let mut acc_a = Rq::default();
+    let mut acc_b = Rq::default();
+    for i in 0..DIGITS {
+        let d = digits[i];
+        acc_a = acc_a + d * ksk.ksk[i].a;
+        acc_b = acc_b + d * ksk.ksk[i].b;
+    }
+    // a' = -Σ a_i·KSK_i.a ; b' = b - Σ a_i·KSK_i.b
+    Ct {
+        a: Rq::default() - acc_a,
+        b: ct.b - acc_b,
+    }
+}

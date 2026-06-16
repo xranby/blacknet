@@ -196,3 +196,61 @@ fn wrong_recipient_key_does_not_detect_others_notes() {
     // And the cleartext detect agrees.
     assert!(detect(&carol.sk, &alice_clue).is_none());
 }
+
+#[test]
+fn keyswitch_preserves_the_message() {
+    // The foundational key-switching test: encrypt under one secret, switch to
+    // a different secret WITHOUT decrypting, and recover the same message.
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, keyswitch, keyswitch_keygen, recover_d};
+    let mut rng = drg(70);
+    let old = Rlwe::keygen(&mut rng);
+    let new = Rlwe::keygen(&mut rng);
+    let ksk = keyswitch_keygen(&mut rng, &old, &new);
+
+    // A plaintext we can drive through encrypt/keyswitch/decrypt: reuse the
+    // detector's RLWE by encrypting a clue's d and switching keys. Simpler:
+    // encrypt a small known pattern via a clue and check round-trip equality.
+    let alice = new_party(1);
+    let key_old = encrypt_detection_key(&mut rng, &old, &detection_material(&alice.sk));
+    let mut s = drg(120);
+    let clue = encrypt(&mut s, &alice.pk, &encode(&note(7)));
+    let enc_d_old = homomorphic_decrypt(&key_old, &clue);
+
+    // Decrypt under the OLD key (baseline).
+    let d_old = recover_d(&old, &enc_d_old);
+    // Key-switch to NEW, decrypt under NEW: must match.
+    let enc_d_new = keyswitch(&ksk, &enc_d_old);
+    let d_new = recover_d(&new, &enc_d_new);
+
+    assert_eq!(
+        d_old, d_new,
+        "key-switched ciphertext must decrypt identically"
+    );
+    // And the pertinence verdict is unchanged (noise stayed in budget).
+    assert!(client_check_pertinence(&new, &enc_d_new));
+}
+
+#[test]
+fn keyswitched_ciphertext_does_not_decrypt_under_the_old_key() {
+    // Sanity: after switching to `new`, the result is NOT decryptable under the
+    // original key (the switch genuinely re-keyed it), so a holder of only the
+    // old key learns nothing — guards against a no-op key-switch.
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, keyswitch, keyswitch_keygen, recover_d};
+    let mut rng = drg(71);
+    let old = Rlwe::keygen(&mut rng);
+    let new = Rlwe::keygen(&mut rng);
+    let ksk = keyswitch_keygen(&mut rng, &old, &new);
+    let alice = new_party(2);
+    let key_old = encrypt_detection_key(&mut rng, &old, &detection_material(&alice.sk));
+    let mut s = drg(121);
+    let clue = encrypt(&mut s, &alice.pk, &encode(&note(7)));
+    let enc_d_old = homomorphic_decrypt(&key_old, &clue);
+    let enc_d_new = keyswitch(&ksk, &enc_d_old);
+
+    let under_old = recover_d(&old, &enc_d_new);
+    let under_new = recover_d(&new, &enc_d_new);
+    assert_ne!(
+        under_old, under_new,
+        "the re-keyed ciphertext must not decrypt to the same thing under the old key"
+    );
+}
