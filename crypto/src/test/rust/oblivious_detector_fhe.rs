@@ -410,3 +410,73 @@ fn blind_rotation_handles_the_negacyclic_boundary() {
     let expected = rotate_clear(&f, 1030);
     assert_eq!(recovered, expected, "negacyclic wrap must be handled");
 }
+
+// --- Sample extraction: RLWE coefficient -> LWE -----------------------------
+
+#[test]
+fn sample_extract_recovers_each_coefficient() {
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, sample_extract};
+    let mut rng = drg(95);
+    let rlwe = Rlwe::keygen(&mut rng);
+
+    // Known plaintext with distinct small coefficients in the first few slots.
+    let mut m = [0i64; 1024];
+    m[0] = 3;
+    m[1] = -2;
+    m[2] = 1;
+    m[5] = -4;
+    m[17] = 2;
+    let enc = rlwe.encrypt_plain(&mut rng, &m);
+
+    for &j in &[0usize, 1, 2, 5, 17, 100] {
+        let lwe = sample_extract(&enc, j);
+        let recovered = rlwe.lwe_decrypt(&lwe);
+        assert_eq!(
+            recovered, m[j] as i32,
+            "sample extraction of coefficient {j} must recover m[{j}]"
+        );
+    }
+}
+
+#[test]
+fn sample_extract_after_blind_rotation() {
+    // The real bootstrap path: rotate the accumulator by a secret exponent,
+    // then sample-extract the constant coefficient. The constant slot after
+    // rotation by k holds the coefficient of the test poly that landed there,
+    // which sample extraction must recover as an LWE ciphertext.
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, blind_rotate, sample_extract, trivial_encrypt,
+    };
+    let mut rng = drg(96);
+    let rlwe = Rlwe::keygen(&mut rng);
+
+    // Test polynomial: f[j] = j+1 for small j (distinct values to track).
+    let mut f = [0i64; 1024];
+    for (i, slot) in f.iter_mut().enumerate().take(16) {
+        *slot = (i as i64) + 1;
+    }
+    let acc = trivial_encrypt(&f);
+
+    // Rotate by k = 3 (bits [1,1], rotations [1,2]).
+    let bits = [1i64, 1];
+    let rots = [1i64, 2];
+    let bsk: Vec<_> = bits
+        .iter()
+        .map(|&b| rlwe.rgsw_encrypt(&mut rng, b))
+        .collect();
+    let rotated = blind_rotate(&acc, &rots, &bsk);
+
+    // After X^3 · f, the constant coefficient is the negacyclic value at 0,
+    // i.e. -f[N-3] = -f[1021] = 0 here... so check against cleartext directly.
+    let k = 3i64;
+    let expected_const = {
+        // constant coeff of X^k * f = (X^k f)[0]; from rotate_clear index 0.
+        rotate_clear(&f, k)[0]
+    };
+    let lwe = sample_extract(&rotated, 0);
+    let recovered = rlwe.lwe_decrypt(&lwe);
+    assert_eq!(
+        recovered, expected_const,
+        "constant coefficient after blind rotation must extract correctly"
+    );
+}

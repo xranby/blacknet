@@ -475,3 +475,70 @@ pub fn blind_rotate(acc: &Ct, rotations: &[i64], bsk: &[Rgsw]) -> Ct {
     }
     acc
 }
+
+// ===========================================================================
+// Sample extraction — RLWE coefficient → LWE.
+//
+// Pulls a single coefficient m_j out of an RLWE ciphertext (a(X), b(X))
+// [b − a·s = Δ·m + e] as an LWE ciphertext under the secret ŝ = the
+// coefficient vector of the RLWE secret s. This is the step after blind
+// rotation in a bootstrap: the rotation lands the wanted lookup value in a
+// coefficient, and sample extraction turns it into an LWE ciphertext (which a
+// subsequent LWE key-switch would return to the original key).
+//
+// Identity. The j-th coefficient of (b − a·s) is Δ·m_j + e_j. Writing
+// (a·s)_j = Σ_l âₗ·sₗ over the negacyclic ring gives âₗ = a_{j−l} for l ≤ j and
+// âₗ = −a_{j−l+N} for l > j, with b̂ = b_j. Then (â, b̂) is an LWE sample of
+// m_j under ŝ.
+// ===========================================================================
+
+/// An LWE ciphertext over `Z_Q` of dimension `N`, under the coefficient-vector
+/// secret of an [`Rlwe`] key: `b − ⟨a, ŝ⟩ = Δ·m + e`.
+pub struct LweCt {
+    a: [i64; N], // balanced coefficients
+    b: i64,
+}
+
+/// Extract coefficient `index` of an RLWE ciphertext as an LWE ciphertext.
+#[must_use]
+pub fn sample_extract(ct: &Ct, index: usize) -> LweCt {
+    let j = index;
+    let a: [i64; N] = core::array::from_fn(|l| {
+        if l <= j {
+            ct.a[j - l].balanced()
+        } else {
+            // −a_{j−l+N}
+            (-ct.a[j + N - l]).balanced()
+        }
+    });
+    LweCt {
+        a,
+        b: ct.b[j].balanced(),
+    }
+}
+
+impl Rlwe {
+    /// Decrypt an LWE ciphertext produced by [`sample_extract`] from this key.
+    /// Computes `b − ⟨a, ŝ⟩` (ŝ = this key's coefficients), then de-scales.
+    #[must_use]
+    pub fn lwe_decrypt(&self, lwe: &LweCt) -> i32 {
+        let q = Q as i128;
+        let mut acc: i128 = i128::from(lwe.b);
+        for l in 0..N {
+            let s_l = i128::from(self.s[l].balanced());
+            acc -= i128::from(lwe.a[l]) * s_l;
+        }
+        // balance into (−Q/2, Q/2]
+        let mut v = acc.rem_euclid(q);
+        if v > q / 2 {
+            v -= q;
+        }
+        let scaled = ((v as f64) / (DELTA as f64)).round() as i128;
+        let m = scaled.rem_euclid(T as i128);
+        if m > (T as i128) / 2 {
+            (m - T as i128) as i32
+        } else {
+            m as i32
+        }
+    }
+}
