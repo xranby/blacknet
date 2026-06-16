@@ -283,3 +283,7 @@ path = "src/test/rust/matrixfold_usecase.rs"
 [[test]]
 name = "oblivious_retrieval"
 path = "src/test/rust/oblivious_retrieval.rs"
+
+[[test]]
+name = "oblivious_detector_fhe"
+path = "src/test/rust/oblivious_detector_fhe.rs"

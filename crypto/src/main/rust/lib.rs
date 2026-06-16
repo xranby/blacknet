@@ -30,6 +30,7 @@ pub mod bigint;
 pub mod blacklemon;
 pub mod branchless;
 pub mod oblivious_retrieval;
+pub mod oblivious_detector_fhe;
 pub mod circuit;
 pub mod commitmentscheme;
 pub mod constraintsystem;
