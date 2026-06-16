@@ -220,7 +220,14 @@ fn succinct_opening_size() {
     println!("   grows with trace length: more steps, bigger transparent win.)");
 }
 
+// Heavy: builds the SIS commitment key at the consensus dimension
+// (SECURE_ROWS = 2048) and proves succinct aggregates across a step sweep, so
+// it is minutes-long and not suitable for the default `cargo test` gate. Run
+// it explicitly when you want the measured on-chain bandwidth numbers:
+//   cargo test --release -p blacknet-snark --test measurements \
+//       reference_form_bandwidth -- --ignored --nocapture
 #[test]
+#[ignore = "slow: builds SECURE_ROWS key + proves an aggregate sweep; run with --ignored"]
 fn reference_form_bandwidth() {
     use blacknet_snark::commitment::commit;
     use blacknet_snark::proof::prove;
