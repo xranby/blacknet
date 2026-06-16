@@ -327,3 +327,86 @@ fn cmux_selects_the_right_branch() {
     assert_eq!(recover_d(&rlwe, &picked0), exp0, "CMux(0) selects c0");
     assert_eq!(recover_d(&rlwe, &picked1), exp1, "CMux(1) selects c1");
 }
+
+// --- Blind rotation: the bootstrap's rotation engine ------------------------
+
+/// Cleartext negacyclic rotation of f by k: (X^k · f) in Z[X]/(X^N+1).
+fn rotate_clear(f: &[i64; 1024], k: i64) -> Vec<i32> {
+    let n = 1024i64;
+    let mut out = vec![0i64; 1024];
+    for (j, &c) in f.iter().enumerate() {
+        let mut idx = (j as i64) + k.rem_euclid(2 * n);
+        let mut sign = 1i64;
+        while idx >= 2 * n {
+            idx -= 2 * n;
+        }
+        if idx >= n {
+            idx -= n;
+            sign = -1;
+        }
+        out[idx as usize] += sign * c;
+    }
+    out.iter().map(|&x| x as i32).collect()
+}
+
+#[test]
+fn blind_rotation_rotates_by_the_encrypted_exponent() {
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, blind_rotate, recover_d, trivial_encrypt};
+    let mut rng = drg(90);
+    let rlwe = Rlwe::keygen(&mut rng);
+
+    // Known test polynomial with small coefficients.
+    let mut f = [0i64; 1024];
+    for (i, slot) in f.iter_mut().enumerate().take(8) {
+        *slot = (i as i64) - 3;
+    }
+    let acc = trivial_encrypt(&f);
+
+    // Secret bits and public rotation amounts. The applied exponent is the sum
+    // over the bits that are 1: here s = [1,0,1,1] and a = [5,9,2,40].
+    let secret_bits = [1i64, 0, 1, 1];
+    let rotations = [5i64, 9, 2, 40];
+    let bsk: Vec<_> = secret_bits
+        .iter()
+        .map(|&b| rlwe.rgsw_encrypt(&mut rng, b))
+        .collect();
+
+    let rotated = blind_rotate(&acc, &rotations, &bsk);
+    let recovered = recover_d(&rlwe, &rotated);
+
+    let k: i64 = secret_bits
+        .iter()
+        .zip(rotations.iter())
+        .map(|(&s, &a)| s * a)
+        .sum(); // 5 + 2 + 40 = 47
+    let expected = rotate_clear(&f, k);
+    assert_eq!(
+        recovered, expected,
+        "blind rotation must rotate the accumulator by the secret-controlled exponent"
+    );
+}
+
+#[test]
+fn blind_rotation_handles_the_negacyclic_boundary() {
+    // A rotation that pushes coefficients past index N, exercising the X^N=-1
+    // sign flip homomorphically.
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, blind_rotate, recover_d, trivial_encrypt};
+    let mut rng = drg(91);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let mut f = [0i64; 1024];
+    f[0] = 2;
+    f[1] = -1;
+    f[1020] = 3; // near the top, will wrap with a sign flip
+    let acc = trivial_encrypt(&f);
+
+    let secret_bits = [1i64, 1];
+    let rotations = [1000i64, 30]; // total 1030 > N=1024 -> wraps
+    let bsk: Vec<_> = secret_bits
+        .iter()
+        .map(|&b| rlwe.rgsw_encrypt(&mut rng, b))
+        .collect();
+    let rotated = blind_rotate(&acc, &rotations, &bsk);
+    let recovered = recover_d(&rlwe, &rotated);
+    let expected = rotate_clear(&f, 1030);
+    assert_eq!(recovered, expected, "negacyclic wrap must be handled");
+}

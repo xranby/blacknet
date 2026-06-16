@@ -404,3 +404,74 @@ pub fn cmux(select: &Rgsw, c0: &Ct, c1: &Ct) -> Ct {
         b: c0.b + picked.b,
     }
 }
+
+// ===========================================================================
+// Blind rotation — the bootstrap's rotation engine.
+//
+// The CMux loop that homomorphically multiplies an encrypted accumulator by a
+// monomial X^k whose exponent k = Σ sᵢ·aᵢ depends on an ENCRYPTED secret (the
+// bits sᵢ, given as RGSW ciphertexts) and public rotation amounts aᵢ. This is
+// the heart of FHEW/TFHE bootstrapping: with the accumulator initialized to a
+// test polynomial encoding a lookup table, the rotation lands the table entry
+// for the encrypted phase in the constant slot, ready for sample extraction.
+//
+// Each step is `ACC ← CMux(BSKᵢ, ACC, X^{aᵢ}·ACC)`: if the secret bit is 1 the
+// rotation is applied, else skipped — homomorphically, learning nothing. Built
+// entirely on the CMux gate above.
+//
+// What this is and is NOT. This is the rotation engine, correct and tested on
+// its own. It is NOT yet a functional bootstrap of BlackLemon's pertinence
+// check: that additionally needs a bootstrapping key over the detection
+// secret's bits, modulus-switching d's coefficients into the rotation range
+// [0,2N), and a test polynomial encoding the range-check indicator — real FHE
+// parameter engineering, deliberately not faked here.
+
+/// The monomial `X^k` in `R_Q[X]/(X^N+1)`, with negacyclic sign for the
+/// wrapped range: `X^{k}` for `k mod 2N ∈ [0,N)` is `+1` at that index, and
+/// for `[N,2N)` is `−1` at index `k−N`.
+fn monomial(k: i64) -> Rq {
+    let m = k.rem_euclid(2 * N as i64) as usize;
+    let mut coeffs = [0i64; N];
+    if m < N {
+        coeffs[m] = 1;
+    } else {
+        coeffs[m - N] = -1;
+    }
+    lift(&coeffs)
+}
+
+/// Multiply a ciphertext by the public monomial `X^k` (rotate the encrypted
+/// polynomial), reusing the ring's negacyclic multiplication.
+fn rotate(ct: &Ct, k: i64) -> Ct {
+    let xk = monomial(k);
+    Ct {
+        a: xk * ct.a,
+        b: xk * ct.b,
+    }
+}
+
+/// A trivial (noiseless) RLWE encryption of a known test polynomial `f`
+/// (coefficients in `Z_t`): `a = 0`, `b = Δ·f`. The accumulator's initial
+/// value in a bootstrap.
+#[must_use]
+pub fn trivial_encrypt(f: &[i64; N]) -> Ct {
+    let scaled: Rq = core::array::from_fn(|i| LMField::new(DELTA * f[i])).into();
+    Ct {
+        a: Rq::default(),
+        b: scaled,
+    }
+}
+
+/// Blind rotation: `ACC ⟼ X^{Σ sᵢ·aᵢ}·ACC`, where the bits `sᵢ` are encrypted
+/// as `bsk[i] = RGSW(sᵢ)` and the `rotations[i] = aᵢ` are public. The exponent
+/// stays hidden; the result is an RLWE ciphertext of the rotated accumulator.
+#[must_use]
+pub fn blind_rotate(acc: &Ct, rotations: &[i64], bsk: &[Rgsw]) -> Ct {
+    debug_assert_eq!(rotations.len(), bsk.len());
+    let mut acc = acc.clone();
+    for (a_i, bsk_i) in rotations.iter().zip(bsk.iter()) {
+        let rotated = rotate(&acc, *a_i);
+        acc = cmux(bsk_i, &acc, &rotated);
+    }
+    acc
+}
