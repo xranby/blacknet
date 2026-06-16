@@ -311,3 +311,96 @@ pub fn keyswitch(ksk: &KeySwitchKey, ct: &Ct) -> Ct {
         b: ct.b - acc_b,
     }
 }
+
+// ===========================================================================
+// RGSW external product — the bootstrapping keystone.
+//
+// The external product `RLWE(m) ⊡ RGSW(μ) → RLWE(μ·m)` multiplies an encrypted
+// message by a (small) RGSW-encrypted scalar with noise controlled by gadget
+// decomposition. With μ ∈ {0,1} it is the CMux gate — the building block of
+// blind rotation, and hence of FHEW/TFHE bootstrapping (CGGI). Together with
+// the key-switching above it is what a homomorphic pertinence check (the
+// bandwidth-lite detector's missing piece) would be assembled from.
+//
+// Construction (the standard gadget product). An RGSW(μ) is `2·DIGITS` RLWE
+// encryptions of zero with the gadget-scaled μ added in: rows `i<DIGITS` carry
+// `μ·Bⁱ` in the a-component, rows `DIGITS+i` carry it in the b-component. The
+// product decomposes the input's `a` and `b` into gadget limbs and pairs them
+// against the rows:
+//   resultₐ = Σ âᵢ·rowᵢ.a + Σ b̂ᵢ·row_{D+i}.a = W + μ·a
+//   result_b = Σ âᵢ·rowᵢ.b + Σ b̂ᵢ·row_{D+i}.b = W·s + E + μ·b
+// so `result_b − resultₐ·s = μ·(b − a·s) + (μe+E) = Δ·(μm) + small`, i.e. an
+// RLWE encryption of μ·m. The extra noise E = Σ âᵢeᵢ + Σ b̂ᵢe_{D+i} is
+// gadget-bounded (limbs < B), so one product stays well within budget.
+// ===========================================================================
+
+/// An RGSW ciphertext encrypting a small scalar μ under an RLWE secret:
+/// `2·DIGITS` RLWE rows (the gadget-product representation).
+pub struct Rgsw {
+    rows: KsVec<Ct>,
+}
+
+/// Scalar `c` lifted to a constant polynomial in the ciphertext ring.
+fn scalar_poly(c: i64) -> Rq {
+    LMField::new(c).into()
+}
+
+impl Rlwe {
+    /// Public encryption of plaintext coefficients (Z_t, balanced). Exposed so
+    /// the external product can be exercised on known messages.
+    pub fn encrypt_plain<R: UniformGenerator<Output = u8>>(&self, rng: &mut R, m: &[i64; N]) -> Ct {
+        self.encrypt(rng, m)
+    }
+
+    /// Encrypt a small scalar μ (a constant, e.g. a 0/1 selector) as an RGSW
+    /// ciphertext — the form CMux and blind rotation use.
+    pub fn rgsw_encrypt<R: UniformGenerator<Output = u8>>(&self, rng: &mut R, mu: i64) -> Rgsw {
+        let mut rows = KsVec::with_capacity(2 * DIGITS);
+        // a-group: rows[i].a += μ·Bⁱ
+        let mut power: i64 = 1;
+        for _ in 0..DIGITS {
+            let mut row = self.encrypt_raw(rng, &Rq::default()); // RLWE(0)
+            row.a = row.a + scalar_poly(mu * power);
+            rows.push(row);
+            power = power.wrapping_mul(1i64 << DIGIT_BITS);
+        }
+        // b-group: rows[D+i].b += μ·Bⁱ
+        let mut power: i64 = 1;
+        for _ in 0..DIGITS {
+            let mut row = self.encrypt_raw(rng, &Rq::default());
+            row.b = row.b + scalar_poly(mu * power);
+            rows.push(row);
+            power = power.wrapping_mul(1i64 << DIGIT_BITS);
+        }
+        Rgsw { rows }
+    }
+}
+
+/// The external product `RLWE(m) ⊡ RGSW(μ) → RLWE(μ·m)`.
+#[must_use]
+pub fn external_product(rgsw: &Rgsw, ct: &Ct) -> Ct {
+    let a_digits = decompose_polynomial::<LMField, Rq>(&ct.a, RADIX_MASK, DIGIT_BITS, DIGITS);
+    let b_digits = decompose_polynomial::<LMField, Rq>(&ct.b, RADIX_MASK, DIGIT_BITS, DIGITS);
+    let mut acc_a = Rq::default();
+    let mut acc_b = Rq::default();
+    for i in 0..DIGITS {
+        acc_a = acc_a + a_digits[i] * rgsw.rows[i].a + b_digits[i] * rgsw.rows[DIGITS + i].a;
+        acc_b = acc_b + a_digits[i] * rgsw.rows[i].b + b_digits[i] * rgsw.rows[DIGITS + i].b;
+    }
+    Ct { a: acc_a, b: acc_b }
+}
+
+/// The CMux gate: `select ? c1 : c0`, where `select` is RGSW(0) or RGSW(1).
+/// Computes `c0 + select ⊡ (c1 − c0)`, the core of blind rotation.
+#[must_use]
+pub fn cmux(select: &Rgsw, c0: &Ct, c1: &Ct) -> Ct {
+    let diff = Ct {
+        a: c1.a - c0.a,
+        b: c1.b - c0.b,
+    };
+    let picked = external_product(select, &diff);
+    Ct {
+        a: c0.a + picked.a,
+        b: c0.b + picked.b,
+    }
+}

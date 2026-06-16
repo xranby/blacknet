@@ -254,3 +254,76 @@ fn keyswitched_ciphertext_does_not_decrypt_under_the_old_key() {
         "the re-keyed ciphertext must not decrypt to the same thing under the old key"
     );
 }
+
+// --- RGSW external product / CMux: the bootstrapping keystone ---------------
+
+fn small_plaintext(seed: u8) -> [i64; 1024] {
+    // A known plaintext in Z_t with small balanced coefficients.
+    let mut m = [0i64; 1024];
+    let mut x = seed as i64 + 1;
+    for (i, slot) in m.iter_mut().enumerate() {
+        x = (x * 1103515245 + 12345) & 0x7fff;
+        *slot = (x % 7) - 3; // in [-3, 3]
+        if i < 4 {
+            *slot = (i as i64) - 1;
+        }
+    }
+    m
+}
+
+#[test]
+fn external_product_with_one_preserves_the_message() {
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, external_product, recover_d};
+    let mut rng = drg(80);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let m = small_plaintext(1);
+    let enc_m = rlwe.encrypt_plain(&mut rng, &m);
+
+    // RGSW(1): the constant-one selector.
+    let rgsw_one = rlwe.rgsw_encrypt(&mut rng, 1);
+    let prod = external_product(&rgsw_one, &enc_m);
+    let recovered = recover_d(&rlwe, &prod);
+
+    let expected: Vec<i32> = m.iter().map(|&x| x as i32).collect();
+    assert_eq!(recovered, expected, "RGSW(1) ⊡ Enc(m) must decrypt to m");
+}
+
+#[test]
+fn external_product_with_zero_annihilates_the_message() {
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, external_product, recover_d};
+    let mut rng = drg(81);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let m = small_plaintext(2);
+    let enc_m = rlwe.encrypt_plain(&mut rng, &m);
+
+    let rgsw_zero = rlwe.rgsw_encrypt(&mut rng, 0);
+    let prod = external_product(&rgsw_zero, &enc_m);
+    let recovered = recover_d(&rlwe, &prod);
+
+    assert!(
+        recovered.iter().all(|&c| c == 0),
+        "RGSW(0) ⊡ Enc(m) must decrypt to 0"
+    );
+}
+
+#[test]
+fn cmux_selects_the_right_branch() {
+    use blacknet_crypto::oblivious_detector_fhe::{Rlwe, cmux, recover_d};
+    let mut rng = drg(82);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let m0 = small_plaintext(3);
+    let m1 = small_plaintext(4);
+    let c0 = rlwe.encrypt_plain(&mut rng, &m0);
+    let c1 = rlwe.encrypt_plain(&mut rng, &m1);
+
+    let sel0 = rlwe.rgsw_encrypt(&mut rng, 0);
+    let sel1 = rlwe.rgsw_encrypt(&mut rng, 1);
+
+    let picked0 = cmux(&sel0, &c0, &c1);
+    let picked1 = cmux(&sel1, &c0, &c1);
+
+    let exp0: Vec<i32> = m0.iter().map(|&x| x as i32).collect();
+    let exp1: Vec<i32> = m1.iter().map(|&x| x as i32).collect();
+    assert_eq!(recover_d(&rlwe, &picked0), exp0, "CMux(0) selects c0");
+    assert_eq!(recover_d(&rlwe, &picked1), exp1, "CMux(1) selects c1");
+}
