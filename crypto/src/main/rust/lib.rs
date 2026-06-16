@@ -29,6 +29,7 @@ pub mod assigner;
 pub mod bigint;
 pub mod blacklemon;
 pub mod branchless;
+pub mod oblivious_retrieval;
 pub mod circuit;
 pub mod commitmentscheme;
 pub mod constraintsystem;

@@ -147,3 +147,7 @@ path = "src/test/rust/bound_opening.rs"
 [[test]]
 name = "wire_succinct"
 path = "src/test/rust/wire_succinct.rs"
+
+[[test]]
+name = "compose_lite_retrieval"
+path = "src/test/rust/compose_lite_retrieval.rs"

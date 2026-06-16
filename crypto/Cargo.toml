@@ -279,3 +279,7 @@ path = "src/test/rust/matrixoperatornorm.rs"
 [[test]]
 name = "matrixfold_usecase"
 path = "src/test/rust/matrixfold_usecase.rs"
+
+[[test]]
+name = "oblivious_retrieval"
+path = "src/test/rust/oblivious_retrieval.rs"
