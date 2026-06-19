@@ -763,3 +763,38 @@ fn sign_extraction_identifies_the_half_torus() {
         );
     }
 }
+
+// --- Latency measurement (run with --ignored --nocapture) -------------------
+
+#[test]
+#[ignore = "measurement: prints ring-mult and bootstrap latency"]
+fn measure_bootstrap_latency() {
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, programmable_bootstrap, sample_extract, sign_test_vector,
+    };
+    use std::time::Instant;
+    let mut rng = drg(140);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+    let tv = sign_test_vector(1);
+
+    // Warm up + time a batch of bootstraps at n = BOOT_N.
+    let reps = 4;
+    let (a, b) = boot_lwe_phase(&secret, 200, 0, &mut rng);
+    let t0 = Instant::now();
+    for _ in 0..reps {
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let _ = sample_extract(&out, 0);
+    }
+    let per = t0.elapsed().as_secs_f64() / reps as f64;
+    let mults = (BOOT_N * 16) as f64; // ~16 ring mults per CMux
+    println!(
+        "MEASURED bootstrap n={BOOT_N}: {per:.3}s  (~{:.1}ms per degree-1024 ring mult)",
+        per / mults * 1000.0
+    );
+    println!(
+        "MEASURED extrapolated n=512: {:.1}s/bootstrap",
+        per * (512.0 / BOOT_N as f64)
+    );
+}
