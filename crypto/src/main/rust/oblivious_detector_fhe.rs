@@ -548,3 +548,156 @@ impl Rlwe {
         }
     }
 }
+
+// ===========================================================================
+// LWE key-switching — re-key a sample-extracted LWE ciphertext.
+//
+// The step after sample extraction in a bootstrap: the extracted ciphertext is
+// an N-dimensional LWE under ŝ (the RLWE secret's coefficient vector), and a
+// bootstrap must bring it back to a compact target LWE key before the next
+// blind rotation. Same gadget identity as the RLWE key-switch, in LWE/vector
+// form, using rat4's `decompose_scalars`.
+//
+// A key-switch key holds, for each source coordinate i and gadget level j, a
+// target-key LWE encryption of `ŝ_i·Bʲ`. To switch `(a,b)` [b − ⟨a,ŝ⟩ = Δm+e],
+// decompose each `a_i` into gadget limbs `a_{i,j}` and set
+//   result = (0, b) − Σ_{i,j} a_{i,j}·KSK[i][j],
+// so `result_b − ⟨result_a, s'⟩ = Δm + e − Σ a_{i,j} e_{i,j}` — the same
+// message under the target key, with gadget-bounded extra noise.
+// ===========================================================================
+
+/// Target LWE dimension. Correctness-demonstration size, not security-analyzed
+/// (consistent with the rest of this module's parameters).
+const LWE_N: usize = 512;
+
+/// A compact LWE key (ternary secret) — the bootstrap's "user" key that a
+/// sample-extracted ciphertext is switched back to.
+pub struct LweKey {
+    s: [i64; LWE_N],
+}
+
+/// An LWE ciphertext under an [`LweKey`].
+pub struct LweCtKs {
+    a: [i64; LWE_N],
+    b: i64,
+}
+
+impl LweKey {
+    pub fn keygen<R: UniformGenerator<Output = u8>>(rng: &mut R) -> Self {
+        let mut tern = UniformIntDistribution::<i64, R>::new(-1..=1);
+        LweKey {
+            s: core::array::from_fn(|_| tern.sample(rng)),
+        }
+    }
+
+    /// Encrypt a raw value `v ∈ Z_Q` (not Δ-scaled): `(a, ⟨a,s⟩ + e + v)`.
+    fn encrypt_raw<R: UniformGenerator<Output = u8>>(&self, rng: &mut R, v: i64) -> LweCtKs {
+        let mut uid = UniformIntDistribution::<i64, R>::new(0..Q);
+        let mut eid = UniformIntDistribution::<i64, R>::new(-8..=8);
+        let a: [i64; LWE_N] = core::array::from_fn(|_| uid.sample(rng));
+        let mut acc: i128 = i128::from(eid.sample(rng)) + i128::from(v);
+        for l in 0..LWE_N {
+            acc += i128::from(a[l]) * i128::from(self.s[l]);
+        }
+        LweCtKs {
+            a,
+            b: balance_q(acc),
+        }
+    }
+
+    /// Decrypt an [`LweCtKs`] to a balanced plaintext coefficient in `Z_t`.
+    #[must_use]
+    pub fn decrypt(&self, ct: &LweCtKs) -> i32 {
+        let mut acc: i128 = i128::from(ct.b);
+        for l in 0..LWE_N {
+            acc -= i128::from(ct.a[l]) * i128::from(self.s[l]);
+        }
+        descale(balance_q(acc))
+    }
+}
+
+/// Reduce an i128 mod Q into the balanced range (−Q/2, Q/2], as i64.
+fn balance_q(x: i128) -> i64 {
+    let q = Q as i128;
+    let mut v = x.rem_euclid(q);
+    if v > q / 2 {
+        v -= q;
+    }
+    v as i64
+}
+
+/// Round a balanced `Δ·m + e` back to the balanced plaintext `m ∈ Z_t`.
+fn descale(v: i64) -> i32 {
+    let scaled = ((v as f64) / (DELTA as f64)).round() as i128;
+    let m = scaled.rem_euclid(T as i128);
+    if m > (T as i128) / 2 {
+        (m - T as i128) as i32
+    } else {
+        m as i32
+    }
+}
+
+/// A key-switch key from the N-dimensional extracted key `ŝ` to a target
+/// [`LweKey`]. Stores `N·DIGITS` target-key encryptions, coordinate-major:
+/// entry `i·DIGITS + j` encrypts `ŝ_i·Bʲ`.
+pub struct LweKeySwitchKey {
+    ksk: KsVec<LweCtKs>,
+}
+
+/// Build the LWE key-switch key from an [`Rlwe`] (whose secret coefficients are
+/// the extracted key `ŝ`) to a target [`LweKey`].
+pub fn lwe_keyswitch_keygen<R: UniformGenerator<Output = u8>>(
+    rng: &mut R,
+    source: &Rlwe,
+    target: &LweKey,
+) -> LweKeySwitchKey {
+    let mut ksk = KsVec::with_capacity(N * DIGITS);
+    for i in 0..N {
+        let s_hat_i = source.s[i].balanced();
+        let mut power: i64 = 1;
+        for _ in 0..DIGITS {
+            // encrypt ŝ_i · Bʲ under the target key
+            let v = balance_q(i128::from(s_hat_i) * i128::from(power));
+            ksk.push(target.encrypt_raw(rng, v));
+            power = power.wrapping_mul(1i64 << DIGIT_BITS);
+        }
+    }
+    LweKeySwitchKey { ksk }
+}
+
+/// Key-switch a sample-extracted [`LweCt`] (dim N, under `ŝ`) to the target key.
+#[must_use]
+pub fn lwe_keyswitch(ksk: &LweKeySwitchKey, src: &LweCt) -> LweCtKs {
+    // Gadget-decompose each source mask coordinate (canonical limbs) via rat4's
+    // decompose_scalars, coordinate-major.
+    let scalars: crate::matrix::DenseVector<LMField> = (0..N)
+        .map(|i| LMField::new(src.a[i]))
+        .collect::<KsVec<_>>()
+        .into();
+    let digits = crate::latticegadget::decompose_scalars::<LMField>(
+        &scalars,
+        RADIX_MASK,
+        DIGIT_BITS as u32,
+        DIGITS,
+    );
+
+    let mut acc_a = [0i128; LWE_N];
+    let mut acc_b: i128 = i128::from(src.b);
+    for i in 0..N {
+        for j in 0..DIGITS {
+            let a_ij = i128::from(digits[i * DIGITS + j].canonical());
+            if a_ij == 0 {
+                continue;
+            }
+            let entry = &ksk.ksk[i * DIGITS + j];
+            acc_b -= a_ij * i128::from(entry.b);
+            for l in 0..LWE_N {
+                acc_a[l] -= a_ij * i128::from(entry.a[l]);
+            }
+        }
+    }
+    LweCtKs {
+        a: core::array::from_fn(|l| balance_q(acc_a[l])),
+        b: balance_q(acc_b),
+    }
+}

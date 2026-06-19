@@ -480,3 +480,75 @@ fn sample_extract_after_blind_rotation() {
         "constant coefficient after blind rotation must extract correctly"
     );
 }
+
+// --- LWE key-switching + full bootstrap data path ---------------------------
+
+#[test]
+fn lwe_keyswitch_recovers_the_message_under_the_target_key() {
+    use blacknet_crypto::oblivious_detector_fhe::{
+        LweKey, Rlwe, lwe_keyswitch, lwe_keyswitch_keygen, sample_extract,
+    };
+    let mut rng = drg(97);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let target = LweKey::keygen(&mut rng);
+    let ksk = lwe_keyswitch_keygen(&mut rng, &rlwe, &target);
+
+    let mut m = [0i64; 1024];
+    m[0] = 5;
+    m[1] = -3;
+    m[2] = 2;
+    let enc = rlwe.encrypt_plain(&mut rng, &m);
+
+    for &j in &[0usize, 1, 2] {
+        let lwe = sample_extract(&enc, j); // dim-N LWE under ŝ
+        let switched = lwe_keyswitch(&ksk, &lwe); // re-keyed to target
+        let recovered = target.decrypt(&switched);
+        assert_eq!(
+            recovered, m[j] as i32,
+            "LWE key-switch must preserve coefficient {j} under the target key"
+        );
+    }
+}
+
+#[test]
+fn full_bootstrap_data_path() {
+    // Exercises the whole bootstrap pipeline structurally:
+    //   blind rotation -> sample extraction -> LWE key-switch -> decrypt.
+    // (The functional LUT / modulus-switch parameterization is separate; this
+    // validates that the ciphertext plumbing composes end to end.)
+    use blacknet_crypto::oblivious_detector_fhe::{
+        LweKey, Rlwe, blind_rotate, lwe_keyswitch, lwe_keyswitch_keygen, sample_extract,
+        trivial_encrypt,
+    };
+    let mut rng = drg(98);
+    let rlwe = Rlwe::keygen(&mut rng);
+    let target = LweKey::keygen(&mut rng);
+    let ksk = lwe_keyswitch_keygen(&mut rng, &rlwe, &target);
+
+    // Test polynomial f[j]=j+1 for small j.
+    let mut f = [0i64; 1024];
+    for (i, slot) in f.iter_mut().enumerate().take(16) {
+        *slot = (i as i64) + 1;
+    }
+    let acc = trivial_encrypt(&f);
+
+    // Blind-rotate by k = 4 (bits [1,1], rotations [1,3]).
+    let bits = [1i64, 1];
+    let rots = [1i64, 3];
+    let bsk: Vec<_> = bits
+        .iter()
+        .map(|&b| rlwe.rgsw_encrypt(&mut rng, b))
+        .collect();
+    let rotated = blind_rotate(&acc, &rots, &bsk);
+
+    // Extract constant coefficient, then key-switch to the compact target key.
+    let lwe = sample_extract(&rotated, 0);
+    let switched = lwe_keyswitch(&ksk, &lwe);
+    let recovered = target.decrypt(&switched);
+
+    let expected = rotate_clear(&f, 4)[0];
+    assert_eq!(
+        recovered, expected,
+        "the constant slot must survive rotation -> extraction -> LWE key-switch"
+    );
+}
