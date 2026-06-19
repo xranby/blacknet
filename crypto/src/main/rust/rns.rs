@@ -129,6 +129,11 @@ impl RnsInt {
 /// Accumulator ring degree (negacyclic, X^N + 1).
 pub const NTT_DEGREE: usize = 1024;
 
+/// Gadget base exponent and digit count for the external product:
+/// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^92 > P`.
+pub const GADGET_BITS: u32 = 23;
+pub const GADGET_DIGITS: usize = 4;
+
 #[inline]
 fn inv_mod(a: i64, p: i64) -> i64 {
     powmod(a, p - 2, p) // p prime
@@ -320,5 +325,51 @@ impl RnsPoly {
                 core::array::from_fn(|i| (delta * i128::from(m[i])).rem_euclid(p) as i64)
             }),
         }
+    }
+
+    /// Embed (possibly negative) integer coefficients into every limb.
+    #[must_use]
+    pub fn from_balanced(coeffs: &[i64; NTT_DEGREE]) -> Self {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = RNS_PRIMES[l];
+                core::array::from_fn(|i| coeffs[i].rem_euclid(p))
+            }),
+        }
+    }
+
+    /// A constant polynomial (degree 0) with the given integer value.
+    #[must_use]
+    pub fn constant(value: i128) -> Self {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = i128::from(RNS_PRIMES[l]);
+                let mut row = [0i64; NTT_DEGREE];
+                row[0] = value.rem_euclid(p) as i64;
+                row
+            }),
+        }
+    }
+
+    /// Signed gadget decomposition into [`GADGET_DIGITS`] base-`2^GADGET_BITS`
+    /// digit polynomials with coefficients in `(−B/2, B/2]`, such that
+    /// `Σ digitᵢ · Bⁱ ≡ self (mod P)`. The decomposition the external product
+    /// applies to keep multiplier coefficients small.
+    #[must_use]
+    pub fn gadget_decompose(&self) -> [RnsPoly; GADGET_DIGITS] {
+        let base: i128 = 1i128 << GADGET_BITS;
+        let mut digit_coeffs = [[0i64; NTT_DEGREE]; GADGET_DIGITS];
+        for j in 0..NTT_DEGREE {
+            let mut x = self.balanced_coefficient(j);
+            for d in digit_coeffs.iter_mut() {
+                let mut r = x.rem_euclid(base);
+                if r > base / 2 {
+                    r -= base;
+                }
+                d[j] = r as i64;
+                x = (x - r) / base;
+            }
+        }
+        core::array::from_fn(|d| RnsPoly::from_balanced(&digit_coeffs[d]))
     }
 }

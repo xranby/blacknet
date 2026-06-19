@@ -108,3 +108,49 @@ fn fresh_noise_has_large_margin() {
         "64-fold sum still decrypts"
     );
 }
+
+// --- External product / CMux over the RNS ring (step 3 core) ----------------
+
+use blacknet_crypto::rns_rlwe::{cmux, external_product};
+
+#[test]
+fn external_product_multiplies_by_the_rgsw_scalar() {
+    let mut rng = drg(20);
+    let key = RnsRlwe::keygen(&mut rng);
+    let m = seeded_plaintext(5);
+    let ct = key.encrypt(&mut rng, &m);
+
+    // RGSW(1) · Enc(m) = Enc(m); RGSW(0) · Enc(m) = Enc(0).
+    let one = key.rgsw_encrypt(&mut rng, 1);
+    let zero = key.rgsw_encrypt(&mut rng, 0);
+
+    let prod_one = key.decrypt(&external_product(&one, &ct));
+    let prod_zero = key.decrypt(&external_product(&zero, &ct));
+    for i in 0..N {
+        assert_eq!(
+            prod_one[i], m[i],
+            "RGSW(1) external product is the identity at {i}"
+        );
+        assert_eq!(prod_zero[i], 0, "RGSW(0) external product is zero at {i}");
+    }
+}
+
+#[test]
+fn cmux_selects_between_ciphertexts() {
+    let mut rng = drg(21);
+    let key = RnsRlwe::keygen(&mut rng);
+    let m0 = seeded_plaintext(2);
+    let m1 = seeded_plaintext(3);
+    let c0 = key.encrypt(&mut rng, &m0);
+    let c1 = key.encrypt(&mut rng, &m1);
+
+    let sel0 = key.rgsw_encrypt(&mut rng, 0);
+    let sel1 = key.rgsw_encrypt(&mut rng, 1);
+
+    let picked0 = key.decrypt(&cmux(&sel0, &c0, &c1));
+    let picked1 = key.decrypt(&cmux(&sel1, &c0, &c1));
+    for i in 0..N {
+        assert_eq!(picked0[i], m0[i], "CMux(0) selects c0 at {i}");
+        assert_eq!(picked1[i], m1[i], "CMux(1) selects c1 at {i}");
+    }
+}

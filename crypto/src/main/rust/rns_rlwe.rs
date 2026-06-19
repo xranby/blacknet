@@ -24,8 +24,11 @@
 //! product, CMux, blind rotation and bootstrap that sit on top — already built
 //! and tested on the LM ring — are re-instantiated over this in the same way.
 
+extern crate alloc;
+use alloc::vec::Vec;
+
 use crate::random::UniformGenerator;
-use crate::rns::{NTT_DEGREE, RnsInt, RnsPoly};
+use crate::rns::{GADGET_BITS, GADGET_DIGITS, NTT_DEGREE, RnsInt, RnsPoly};
 
 /// Plaintext modulus (matches BlackLemon's clue ring).
 pub const T: i64 = 65537;
@@ -83,6 +86,69 @@ impl RnsRlwe {
             q.rem_euclid(T)
         })
     }
+
+    /// A fresh RLWE encryption of zero: `a` uniform, `b = e − a·s`, so the phase
+    /// `b + a·s = e` is small. The building block of RGSW rows.
+    pub fn encrypt_zero<R: UniformGenerator<Output = u8>>(&self, rng: &mut R) -> RnsCt {
+        let a = RnsPoly::uniform(rng);
+        let e = RnsPoly::small(rng, 8);
+        let b = e.sub(&a.negacyclic_mul(&self.s));
+        RnsCt { a, b }
+    }
+
+    /// Encrypt a small scalar `μ` as an RGSW ciphertext (the CMux selector
+    /// form): `2·GADGET_DIGITS` RLWE(0) rows, with `μ·Bⁱ` added to the `a`-part
+    /// of the first group and the `b`-part of the second.
+    pub fn rgsw_encrypt<R: UniformGenerator<Output = u8>>(&self, rng: &mut R, mu: i128) -> RnsRgsw {
+        let mut rows = Vec::with_capacity(2 * GADGET_DIGITS);
+        for i in 0..GADGET_DIGITS {
+            let g = mu * (1i128 << (GADGET_BITS * i as u32));
+            let mut row = self.encrypt_zero(rng);
+            row.a = row.a.add(&RnsPoly::constant(g));
+            rows.push(row);
+        }
+        for i in 0..GADGET_DIGITS {
+            let g = mu * (1i128 << (GADGET_BITS * i as u32));
+            let mut row = self.encrypt_zero(rng);
+            row.b = row.b.add(&RnsPoly::constant(g));
+            rows.push(row);
+        }
+        RnsRgsw { rows }
+    }
+}
+
+/// An RGSW ciphertext over the RNS ring: `2·GADGET_DIGITS` RLWE rows.
+pub struct RnsRgsw {
+    rows: Vec<RnsCt>,
+}
+
+/// External product `RLWE(m) ⊡ RGSW(μ) → RLWE(μ·m)`: gadget-decompose the
+/// ciphertext and recombine against the RGSW rows. Sound here because the
+/// digit coefficients are `< B = 2^23` and the row noise `~2^3`, so the product
+/// noise `~2^39` sits far below `Δ/2 ≈ 2^71`.
+#[must_use]
+pub fn external_product(rgsw: &RnsRgsw, ct: &RnsCt) -> RnsCt {
+    let a_digits = ct.a.gadget_decompose();
+    let b_digits = ct.b.gadget_decompose();
+    let mut acc_a = RnsPoly::zero();
+    let mut acc_b = RnsPoly::zero();
+    for i in 0..GADGET_DIGITS {
+        acc_a = acc_a
+            .add(&a_digits[i].negacyclic_mul(&rgsw.rows[i].a))
+            .add(&b_digits[i].negacyclic_mul(&rgsw.rows[GADGET_DIGITS + i].a));
+        acc_b = acc_b
+            .add(&a_digits[i].negacyclic_mul(&rgsw.rows[i].b))
+            .add(&b_digits[i].negacyclic_mul(&rgsw.rows[GADGET_DIGITS + i].b));
+    }
+    RnsCt { a: acc_a, b: acc_b }
+}
+
+/// CMux: `select ? c1 : c0`, computed as `c0 + select ⊡ (c1 − c0)`. The core
+/// gate of blind rotation and of the circuit-bootstrap fold.
+#[must_use]
+pub fn cmux(select: &RnsRgsw, c0: &RnsCt, c1: &RnsCt) -> RnsCt {
+    let diff = c1.sub(c0);
+    c0.add(&external_product(select, &diff))
 }
 
 impl RnsCt {
