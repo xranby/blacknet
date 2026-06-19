@@ -734,3 +734,32 @@ fn full_domain_encoding_fails_on_the_non_negacyclic_value() {
         "the upper-half phase yields the negacyclic flip -f[1]"
     );
 }
+
+// --- Homomorphic sign extraction (first step of the fold) -------------------
+
+#[test]
+#[ignore = "slow: blind rotation; run with --ignored"]
+fn sign_extraction_identifies_the_half_torus() {
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, programmable_bootstrap, sample_extract, sign_test_vector,
+    };
+    let mut rng = drg(130);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+    let tv = sign_test_vector(1);
+
+    // Lower-half phases -> +1; upper-half phases -> -1. Checked against the
+    // cleartext half-torus membership.
+    let n = 1024i64;
+    for &phase in &[100i64, 500, 1000, 1100, 1500, 2000] {
+        let (a, b) = boot_lwe_phase(&secret, phase, 0, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let recovered = i64::from(acc_key.lwe_decrypt(&sample_extract(&out, 0)));
+        let expected = if phase < n { 1 } else { -1 };
+        assert_eq!(
+            recovered, expected,
+            "sign extraction must report the half-torus of phase {phase}"
+        );
+    }
+}

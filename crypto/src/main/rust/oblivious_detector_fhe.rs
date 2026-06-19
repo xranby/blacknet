@@ -814,3 +814,23 @@ pub fn half_domain_test_vector(values: &[i64], p: usize) -> [i64; N] {
         values[m]
     })
 }
+
+// ===========================================================================
+// Homomorphic sign extraction — which half-torus the encrypted phase is in.
+//
+// The sign / MSB of the phase is a NEGACYCLIC function (sign(φ+N) = −sign(φ)),
+// so unlike the folded |·| predicate it is directly bootstrappable: a constant
+// test vector `≡ magnitude` yields `+magnitude` for φ ∈ [0,N) and `−magnitude`
+// for φ ∈ [N,2N) (the ring's automatic sign flip IS the sign). This is the
+// first step of folding the even "near 0" predicate of the range-check: once
+// the sign is known, the phase can be reflected onto one half and classified by
+// a single half-domain bootstrap.
+// ===========================================================================
+
+/// A constant test vector `≡ magnitude`. Bootstrapping a phase against it
+/// extracts the half-torus sign: `+magnitude` (lower half) or `−magnitude`
+/// (upper half).
+#[must_use]
+pub fn sign_test_vector(magnitude: i64) -> [i64; N] {
+    [magnitude; N]
+}
