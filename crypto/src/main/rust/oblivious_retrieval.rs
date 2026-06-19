@@ -131,25 +131,16 @@ impl Detector for ReferenceDetector {
     fn scan(&self, req: &RetrievalRequest, board: &[Clue]) -> Digest {
         let sk = req.key.secret;
         let mut entries = Vec::new();
-        let mut indices = Vec::new();
         for (offset, clue) in board.iter().enumerate() {
             if entries.len() >= req.max_results {
                 break;
             }
             if let Some(payload) = blacklemon::detect(sk, clue) {
                 let index = req.board_start + offset as u64;
-                indices.push(index);
                 entries.push(DigestEntry { index, payload });
             }
         }
-        let scanned_len = board.len() as u64;
-        let commitment = commit_digest(req.board_start, scanned_len, &indices);
-        Digest {
-            entries,
-            board_start: req.board_start,
-            scanned_len,
-            commitment,
-        }
+        Digest::assemble(req.board_start, board.len() as u64, entries)
     }
 }
 
@@ -162,5 +153,20 @@ impl Digest {
     pub fn commitment_is_consistent(&self) -> bool {
         let indices: Vec<u64> = self.entries.iter().map(|e| e.index).collect();
         commit_digest(self.board_start, self.scanned_len, &indices) == self.commitment
+    }
+
+    /// Assemble a digest from matched entries and the scanned range, computing
+    /// the binding commitment. Used by every backend (trusted or oblivious) so
+    /// they produce byte-identical digests for the same matches.
+    #[must_use]
+    pub fn assemble(board_start: u64, scanned_len: u64, entries: Vec<DigestEntry>) -> Digest {
+        let indices: Vec<u64> = entries.iter().map(|e| e.index).collect();
+        let commitment = commit_digest(board_start, scanned_len, &indices);
+        Digest {
+            entries,
+            board_start,
+            scanned_len,
+            commitment,
+        }
     }
 }

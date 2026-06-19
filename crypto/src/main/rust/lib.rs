@@ -31,6 +31,7 @@ pub mod blacklemon;
 pub mod branchless;
 pub mod oblivious_retrieval;
 pub mod oblivious_detector_fhe;
+pub mod instant_omr;
 pub mod rns;
 pub mod circuit;
 pub mod commitmentscheme;

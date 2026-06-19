@@ -147,6 +147,29 @@ pub fn clue_public_parts(ct: &CipherText) -> ([i32; lpr::D], [i32; lpr::D]) {
     )
 }
 
+/// Reconstruct the payload [`PlainText`] from already-recovered *balanced*
+/// coefficients of `d` (e.g. produced by an oblivious homomorphic decryption),
+/// using the exact per-coefficient bands [`detect`] uses: a coefficient near
+/// `DELTA` (within `R`) is a one, otherwise zero. Intended for a clue already
+/// known to be pertinent (so every coefficient lies in a band); this is the
+/// payload half of `detect`, split out so an outsourced detector can finish the
+/// decryption from the recovered `d` without the recipient's secret key.
+#[must_use]
+pub fn payload_from_d(coefficients: &[i32]) -> PlainText {
+    assert_eq!(
+        coefficients.len(),
+        lpr::D,
+        "expected D balanced coefficients"
+    );
+    let mut m = lpr::Rt::ZERO;
+    for (i, &coeff) in coefficients.iter().enumerate() {
+        if lpr::DELTA - coeff.abs() <= R {
+            m[i] = lpr::Zt::ONE;
+        }
+    }
+    PlainText { m }
+}
+
 /// The detection modulus and per-coefficient tolerance, exposed so an
 /// outsourced detector can apply the exact same pertinence check [`detect`]
 /// uses, on a homomorphically-recovered `d`.

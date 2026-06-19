@@ -295,3 +295,7 @@ path = "src/test/rust/ntt_acceleration.rs"
 [[test]]
 name = "rns"
 path = "src/test/rust/rns.rs"
+
+[[test]]
+name = "instant_omr"
+path = "src/test/rust/instant_omr.rs"
