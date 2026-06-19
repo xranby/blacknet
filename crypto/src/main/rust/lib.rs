@@ -33,6 +33,7 @@ pub mod oblivious_retrieval;
 pub mod oblivious_detector_fhe;
 pub mod instant_omr;
 pub mod rns;
+pub mod rns_rlwe;
 pub mod circuit;
 pub mod commitmentscheme;
 pub mod constraintsystem;

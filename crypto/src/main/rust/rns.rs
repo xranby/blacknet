@@ -22,6 +22,8 @@
 //! Each prime here satisfies `2048 | p − 1` (so a length-2048 negacyclic NTT
 //! exists over it) and the product is `≈ 2^88 > 2^77`.
 
+use crate::random::{Distribution, UniformGenerator, UniformIntDistribution};
+
 /// NTT-friendly RNS limb primes: each has `2048 | p − 1`; product ≈ 2^88.
 pub const RNS_PRIMES: [i64; 3] = [469762049, 754974721, 998244353];
 
@@ -94,15 +96,15 @@ impl RnsInt {
     pub fn to_int(&self) -> i128 {
         let p = Self::product();
         let mut acc: i128 = 0;
-        for i in 0..3 {
-            let pi = i128::from(RNS_PRIMES[i]);
+        for (&prime, &residue) in RNS_PRIMES.iter().zip(self.residues.iter()) {
+            let pi = i128::from(prime);
             let mi = p / pi; // Π_{j≠i} p_j
             // inverse of mi modulo pi (pi prime -> Fermat): (mi mod pi)^(pi-2)
             let mi_mod = (mi.rem_euclid(pi)) as i64;
-            let inv = powmod(mi_mod, RNS_PRIMES[i] - 2, RNS_PRIMES[i]);
+            let inv = powmod(mi_mod, prime - 2, prime);
             // term = residue_i * mi * inv  (mod P), built carefully to fit i128
             let coeff = (mi.rem_euclid(p) * i128::from(inv)).rem_euclid(p);
-            let term = (coeff * i128::from(self.residues[i])).rem_euclid(p);
+            let term = (coeff * i128::from(residue)).rem_euclid(p);
             acc = (acc + term).rem_euclid(p);
         }
         acc
@@ -245,5 +247,78 @@ impl RnsPoly {
     pub fn coefficient(&self, index: usize) -> i128 {
         let residues = core::array::from_fn(|l| self.limbs[l][index]);
         RnsInt { residues }.to_int()
+    }
+
+    /// The balanced (centered in `(−P/2, P/2]`) coefficient at `index`.
+    #[must_use]
+    pub fn balanced_coefficient(&self, index: usize) -> i128 {
+        let p = RnsInt::product();
+        let c = self.coefficient(index);
+        if c > p / 2 { c - p } else { c }
+    }
+
+    /// The zero polynomial.
+    #[must_use]
+    pub fn zero() -> Self {
+        RnsPoly {
+            limbs: [[0; NTT_DEGREE]; 3],
+        }
+    }
+
+    /// Coefficient-wise sum.
+    #[must_use]
+    pub fn add(&self, other: &RnsPoly) -> RnsPoly {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = RNS_PRIMES[l];
+                core::array::from_fn(|i| (self.limbs[l][i] + other.limbs[l][i]).rem_euclid(p))
+            }),
+        }
+    }
+
+    /// Coefficient-wise difference.
+    #[must_use]
+    pub fn sub(&self, other: &RnsPoly) -> RnsPoly {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = RNS_PRIMES[l];
+                core::array::from_fn(|i| (self.limbs[l][i] - other.limbs[l][i]).rem_euclid(p))
+            }),
+        }
+    }
+
+    /// A polynomial with every coefficient drawn independently and uniformly
+    /// from `[0, p)` per limb (a uniform element of the RNS ring).
+    pub fn uniform<R: UniformGenerator<Output = u8>>(rng: &mut R) -> Self {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let mut uid = UniformIntDistribution::<i64, R>::new(0..RNS_PRIMES[l]);
+                core::array::from_fn(|_| uid.sample(rng))
+            }),
+        }
+    }
+
+    /// A polynomial whose integer coefficients are drawn from `[-bound, bound]`
+    /// (small error or ternary secret), embedded into every limb.
+    pub fn small<R: UniformGenerator<Output = u8>>(rng: &mut R, bound: i64) -> Self {
+        let mut sid = UniformIntDistribution::<i64, R>::new(-bound..=bound);
+        let coeffs: [i64; NTT_DEGREE] = core::array::from_fn(|_| sid.sample(rng));
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = RNS_PRIMES[l];
+                core::array::from_fn(|i| coeffs[i].rem_euclid(p))
+            }),
+        }
+    }
+
+    /// Embed integer plaintext coefficients scaled by `delta` into the ring.
+    #[must_use]
+    pub fn scale_plaintext(m: &[i64; NTT_DEGREE], delta: i128) -> Self {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = i128::from(RNS_PRIMES[l]);
+                core::array::from_fn(|i| (delta * i128::from(m[i])).rem_euclid(p) as i64)
+            }),
+        }
     }
 }

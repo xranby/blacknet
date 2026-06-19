@@ -299,3 +299,7 @@ path = "src/test/rust/rns.rs"
 [[test]]
 name = "instant_omr"
 path = "src/test/rust/instant_omr.rs"
+
+[[test]]
+name = "rns_rlwe"
+path = "src/test/rust/rns_rlwe.rs"
