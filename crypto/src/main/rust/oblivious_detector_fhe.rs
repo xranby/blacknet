@@ -778,3 +778,39 @@ pub fn programmable_bootstrap(bsk: &BootstrapKey, tv: &[i64; N], lwe_a: &[i64], 
     // Apply X^{a_i} for each set secret bit: ACC = X^{-b + ⟨a,s⟩}·tv = X^{-φ}·tv
     blind_rotate(&acc, lwe_a, &bsk.bsk)
 }
+
+// ===========================================================================
+// Half-domain functional bootstrap — evaluating NON-negacyclic functions.
+//
+// A plain bootstrap can only evaluate negacyclic f (f(x+N) = −f(x)), because
+// the test polynomial lives in R/(X^N+1). The standard way to evaluate an
+// ARBITRARY function is to confine the encoded phase to the lower half-torus
+// [0,N): then blind rotation never crosses into the negacyclic upper half, so
+// the test polynomial's lower N coefficients are unconstrained and may encode
+// any function. The cost is one bit of message space (N usable phases, not 2N).
+//
+// `encode_half_domain` places message m at the centre of its slot in [0,N)
+// (margin on both sides for noise), and `half_domain_test_vector` fills the
+// lower N coefficients with the per-message outputs. Feeding these to
+// `programmable_bootstrap` evaluates the arbitrary function.
+
+/// Encode message `m ∈ [0,p)` as a phase centred in its slot within the lower
+/// half-torus `[0,N)` — away from the boundaries 0 and N so rotation never
+/// crosses into the negacyclic half.
+#[must_use]
+pub fn encode_half_domain(m: usize, p: usize) -> i64 {
+    let slot = N / p;
+    (m * slot + slot / 2) as i64
+}
+
+/// Build a test polynomial whose lower `N` coefficients encode an arbitrary
+/// function `values: [0,p) → Z_t` over the half-torus (the upper half is left
+/// zero and never indexed). Works for any function, negacyclic or not.
+#[must_use]
+pub fn half_domain_test_vector(values: &[i64], p: usize) -> [i64; N] {
+    let slot = N / p;
+    core::array::from_fn(|k| {
+        let m = (k / slot).min(p - 1);
+        values[m]
+    })
+}

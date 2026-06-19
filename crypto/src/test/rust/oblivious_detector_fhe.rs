@@ -569,7 +569,12 @@ fn step_test_vector() -> [i64; 1024] {
 }
 
 // Construct a noiseless LWE mod 2N with chosen phase under a binary secret.
-fn boot_lwe(s: &[i64; BOOT_N], phase: i64, noise: i64, rng: &mut FastDRG) -> ([i64; BOOT_N], i64) {
+fn boot_lwe_phase(
+    s: &[i64; BOOT_N],
+    phase: i64,
+    noise: i64,
+    rng: &mut FastDRG,
+) -> ([i64; BOOT_N], i64) {
     use blacknet_crypto::random::{Distribution, UniformIntDistribution};
     let two_n = 2 * 1024i64;
     let mut uid = UniformIntDistribution::<i64, FastDRG>::new(0..two_n);
@@ -595,7 +600,7 @@ fn programmable_bootstrap_evaluates_the_lut() {
 
     // Phase in the first region (-> LUT value 1) and second region (-> 2).
     for &(phase, expected) in &[(200i64, 1i64), (800i64, 2i64)] {
-        let (a, b) = boot_lwe(&secret, phase, 0, &mut rng);
+        let (a, b) = boot_lwe_phase(&secret, phase, 0, &mut rng);
         let out = programmable_bootstrap(&bsk, &tv, &a, b);
         let lwe = sample_extract(&out, 0);
         let recovered = acc_key.lwe_decrypt(&lwe);
@@ -630,7 +635,7 @@ fn bootstrap_refreshes_noise() {
     // Inject input noise far larger than any ciphertext noise would be, but
     // below the slot half-width, so the rounded phase is unchanged.
     for &noise in &[0i64, 30, -30, 80, -80] {
-        let (a, b) = boot_lwe(&secret, phase, noise, &mut rng);
+        let (a, b) = boot_lwe_phase(&secret, phase, noise, &mut rng);
         let out = programmable_bootstrap(&bsk, &tv, &a, b);
         let recovered = acc_key.lwe_decrypt(&sample_extract(&out, 0));
         assert_eq!(
@@ -656,4 +661,76 @@ fn modulus_switch_preserves_the_phase_ratio() {
             "mod-switch must preserve the phase ratio within rounding (got {switched}, want ~{expected})"
         );
     }
+}
+
+// --- Half-domain FDFB: evaluating a NON-negacyclic function -----------------
+
+#[test]
+#[ignore = "slow: multiple blind rotations; run with --ignored"]
+fn half_domain_evaluates_a_non_negacyclic_function() {
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, encode_half_domain, half_domain_test_vector,
+        programmable_bootstrap, sample_extract,
+    };
+    let mut rng = drg(120);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+
+    // A NON-negacyclic function: f = [1, 1, 2, 1] over p = 4. (Negacyclic would
+    // force f[2] = -f[0] = -1, but here f[2] = 2.)
+    let p = 4;
+    let f = [1i64, 1, 2, 1];
+    let tv = half_domain_test_vector(&f, p);
+
+    for m in 0..p {
+        let phase = encode_half_domain(m, p); // in [0, N)
+        let (a, b) = boot_lwe_phase(&secret, phase, 0, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let recovered = acc_key.lwe_decrypt(&sample_extract(&out, 0));
+        assert_eq!(
+            i64::from(recovered),
+            f[m],
+            "half-domain bootstrap must evaluate the arbitrary f at message {m}"
+        );
+    }
+}
+
+#[test]
+#[ignore = "slow: blind rotation; run with --ignored"]
+fn full_domain_encoding_fails_on_the_non_negacyclic_value() {
+    // The contrast that justifies the half-domain technique: encode the SAME
+    // non-negacyclic f with a full-domain (2N) phase. For the message whose
+    // phase lands in the upper half, negacyclicity flips the sign, so the
+    // result is WRONG - which is exactly why the half-domain confinement is
+    // needed.
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, half_domain_test_vector, programmable_bootstrap, sample_extract,
+    };
+    let mut rng = drg(121);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+    let p = 4;
+    let f = [1i64, 1, 2, 1];
+    let tv = half_domain_test_vector(&f, p);
+
+    // Message m = 2 encoded full-domain: phase = 2*(2N/p) + (2N/2p) = 1280 (in
+    // the upper half [N,2N)). Negacyclicity gives -tv[1280-N] = -tv[256] =
+    // -f[1] = -1, not f[2] = 2.
+    let two_n = 2 * 1024i64;
+    let slot = two_n / p as i64;
+    let phase_full = 2 * slot + slot / 2; // 1280, upper half
+    let (a, b) = boot_lwe_phase(&secret, phase_full, 0, &mut rng);
+    let out = programmable_bootstrap(&bsk, &tv, &a, b);
+    let recovered = i64::from(acc_key.lwe_decrypt(&sample_extract(&out, 0)));
+
+    assert_ne!(
+        recovered, f[2],
+        "full-domain encoding mis-evaluates the non-negacyclic value"
+    );
+    assert_eq!(
+        recovered, -f[1],
+        "the upper-half phase yields the negacyclic flip -f[1]"
+    );
 }
