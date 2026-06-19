@@ -34,6 +34,7 @@ pub mod oblivious_detector_fhe;
 pub mod instant_omr;
 pub mod rns;
 pub mod rns_rlwe;
+pub mod rns_compaction;
 pub mod circuit;
 pub mod commitmentscheme;
 pub mod constraintsystem;
