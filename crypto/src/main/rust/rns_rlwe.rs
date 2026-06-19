@@ -151,6 +151,54 @@ pub fn cmux(select: &RnsRgsw, c0: &RnsCt, c1: &RnsCt) -> RnsCt {
     c0.add(&external_product(select, &diff))
 }
 
+/// The monomial `X^k` in the negacyclic ring: `+1` at index `k mod 2N` when
+/// that is `< N`, else `−1` at index `k − N`.
+fn monomial(k: i64) -> RnsPoly {
+    let m = k.rem_euclid(2 * NTT_DEGREE as i64) as usize;
+    let mut coeffs = [0i64; NTT_DEGREE];
+    if m < NTT_DEGREE {
+        coeffs[m] = 1;
+    } else {
+        coeffs[m - NTT_DEGREE] = -1;
+    }
+    RnsPoly::from_balanced(&coeffs)
+}
+
+/// Multiply a ciphertext by the public monomial `X^k` (rotate the encrypted
+/// polynomial).
+#[must_use]
+pub fn rotate(ct: &RnsCt, k: i64) -> RnsCt {
+    let xk = monomial(k);
+    RnsCt {
+        a: ct.a.negacyclic_mul(&xk),
+        b: ct.b.negacyclic_mul(&xk),
+    }
+}
+
+/// A trivial (noiseless) encryption of a known test polynomial `f`: `a = 0`,
+/// `b = Δ·f`. The accumulator's initial value in a bootstrap.
+#[must_use]
+pub fn trivial_encrypt(f: &[i64; NTT_DEGREE]) -> RnsCt {
+    RnsCt {
+        a: RnsPoly::zero(),
+        b: RnsPoly::scale_plaintext(f, delta()),
+    }
+}
+
+/// Blind rotation: `ACC ← CMux(bskᵢ, ACC, X^{rotᵢ}·ACC)` over all `i`, rotating
+/// the accumulator by `Σ sᵢ·rotᵢ` where the `sᵢ` are the (encrypted) secret
+/// bits carried by the bootstrapping key `bsk`. The bootstrap's rotation
+/// engine, built entirely on CMux.
+#[must_use]
+pub fn blind_rotate(acc: &RnsCt, rotations: &[i64], bsk: &[RnsRgsw]) -> RnsCt {
+    let mut acc = acc.clone();
+    for (rot, sel) in rotations.iter().zip(bsk.iter()) {
+        let rotated = rotate(&acc, *rot);
+        acc = cmux(sel, &acc, &rotated);
+    }
+    acc
+}
+
 impl RnsCt {
     /// Homomorphic addition.
     #[must_use]

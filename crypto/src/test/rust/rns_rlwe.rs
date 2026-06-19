@@ -154,3 +154,49 @@ fn cmux_selects_between_ciphertexts() {
         assert_eq!(picked1[i], m1[i], "CMux(1) selects c1 at {i}");
     }
 }
+
+// --- Blind rotation over the RNS ring (step 3, rotation engine) -------------
+
+use blacknet_crypto::rns_rlwe::{blind_rotate, trivial_encrypt};
+
+#[test]
+fn blind_rotation_matches_cleartext_rotation() {
+    let mut rng = drg(30);
+    let key = RnsRlwe::keygen(&mut rng);
+
+    // A small test polynomial and a set of secret bits + public rotations.
+    let mut f = [0i64; N];
+    for (i, slot) in f.iter_mut().take(16).enumerate() {
+        *slot = (i as i64 * 3 + 1) % T;
+    }
+    let bits = [1i64, 0, 1, 1, 0, 1, 0, 0];
+    let rotations = [5i64, 9, 2, 7, 11, 3, 13, 4];
+    let phase: i64 = bits.iter().zip(rotations.iter()).map(|(s, r)| s * r).sum();
+
+    // Bootstrapping key: RGSW of each secret bit.
+    let bsk: Vec<_> = bits
+        .iter()
+        .map(|&b| key.rgsw_encrypt(&mut rng, i128::from(b)))
+        .collect();
+
+    let acc = trivial_encrypt(&f);
+    let rotated = blind_rotate(&acc, &rotations, &bsk);
+    let got = key.decrypt(&rotated);
+
+    // Cleartext: X^phase · f in the negacyclic ring.
+    let mut expect = [0i64; N];
+    for (i, &fi) in f.iter().enumerate() {
+        let k = (i as i64 + phase).rem_euclid(2 * N as i64) as usize;
+        if k < N {
+            expect[k] = fi.rem_euclid(T);
+        } else {
+            expect[k - N] = (-fi).rem_euclid(T);
+        }
+    }
+    for i in 0..N {
+        assert_eq!(
+            got[i], expect[i],
+            "blind rotation must equal X^phase·f at {i}"
+        );
+    }
+}
