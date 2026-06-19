@@ -108,3 +108,142 @@ impl RnsInt {
         acc
     }
 }
+
+// ===========================================================================
+// NTT-accelerated negacyclic polynomial multiplication over the RNS basis.
+//
+// This is the arithmetic core of the redesigned bootstrap accumulator: degree-N
+// negacyclic multiplication (the dominant cost of blind rotation) done in
+// O(N log N) per limb via the number-theoretic transform, then recombined by
+// the CRT to give a product modulo P ≈ 2^88 — large enough for the
+// circuit-bootstrap fold's soundness AND fast, the single change the
+// completion analysis calls for.
+//
+// It is deliberately self-contained (its own roots and transform), so its
+// correctness is established entirely by the `== schoolbook` tests rather than
+// by matching any external twiddle convention. The root finder verifies
+// ψ^N = −1 (a genuine negacyclic root) rather than assuming a generator.
+
+/// Accumulator ring degree (negacyclic, X^N + 1).
+pub const NTT_DEGREE: usize = 1024;
+
+#[inline]
+fn inv_mod(a: i64, p: i64) -> i64 {
+    powmod(a, p - 2, p) // p prime
+}
+
+/// A primitive `2N`-th root of unity modulo `p` (so `ψ^N = −1`): the twist for
+/// negacyclic NTT. Searches small bases and *verifies* the order rather than
+/// assuming a generator.
+fn negacyclic_root(p: i64) -> i64 {
+    let exp = (p - 1) / (2 * NTT_DEGREE as i64);
+    for h in 2..1000i64 {
+        let psi = powmod(h, exp, p);
+        if powmod(psi, NTT_DEGREE as i64, p) == p - 1 {
+            return psi;
+        }
+    }
+    panic!("no negacyclic root found for prime {p}");
+}
+
+/// In-place iterative radix-2 NTT of length `NTT_DEGREE` with `root` a primitive
+/// `N`-th root of unity mod `p`.
+fn ntt_inplace(a: &mut [i64; NTT_DEGREE], root: i64, p: i64) {
+    let n = NTT_DEGREE;
+    // bit-reversal permutation
+    let bits = n.trailing_zeros();
+    for i in 0..n {
+        let j = (i as u32).reverse_bits() >> (32 - bits);
+        let j = j as usize;
+        if i < j {
+            a.swap(i, j);
+        }
+    }
+    let mut len = 2;
+    while len <= n {
+        let wlen = powmod(root, (n / len) as i64, p);
+        let mut i = 0;
+        while i < n {
+            let mut w = 1i64;
+            for j in 0..len / 2 {
+                let u = a[i + j];
+                let v = mulmod(a[i + j + len / 2], w, p);
+                a[i + j] = (u + v).rem_euclid(p);
+                a[i + j + len / 2] = (u - v).rem_euclid(p);
+                w = mulmod(w, wlen, p);
+            }
+            i += len;
+        }
+        len <<= 1;
+    }
+}
+
+/// Negacyclic convolution `a * b mod (X^N + 1, p)` via NTT: ψ-weight, length-N
+/// cyclic NTT, pointwise product, inverse NTT, ψ-unweight.
+fn negacyclic_mul_mod(a: &[i64; NTT_DEGREE], b: &[i64; NTT_DEGREE], p: i64) -> [i64; NTT_DEGREE] {
+    let n = NTT_DEGREE;
+    let psi = negacyclic_root(p);
+    let psi_inv = inv_mod(psi, p);
+    let omega = mulmod(psi, psi, p); // N-th root
+    let omega_inv = inv_mod(omega, p);
+    let n_inv = inv_mod(n as i64, p);
+
+    let mut fa = [0i64; NTT_DEGREE];
+    let mut fb = [0i64; NTT_DEGREE];
+    let mut psi_pow = 1i64;
+    for i in 0..n {
+        fa[i] = mulmod(a[i].rem_euclid(p), psi_pow, p);
+        fb[i] = mulmod(b[i].rem_euclid(p), psi_pow, p);
+        psi_pow = mulmod(psi_pow, psi, p);
+    }
+    ntt_inplace(&mut fa, omega, p);
+    ntt_inplace(&mut fb, omega, p);
+    let mut fc: [i64; NTT_DEGREE] = core::array::from_fn(|k| mulmod(fa[k], fb[k], p));
+    ntt_inplace(&mut fc, omega_inv, p);
+
+    let mut psi_inv_pow = 1i64;
+    let mut out = [0i64; NTT_DEGREE];
+    for i in 0..n {
+        let scaled = mulmod(fc[i], n_inv, p);
+        out[i] = mulmod(scaled, psi_inv_pow, p);
+        psi_inv_pow = mulmod(psi_inv_pow, psi_inv, p);
+    }
+    out
+}
+
+/// A degree-`NTT_DEGREE` polynomial in the RNS basis: one residue vector per
+/// limb. The accumulator's element type.
+#[derive(Clone)]
+pub struct RnsPoly {
+    limbs: [[i64; NTT_DEGREE]; 3],
+}
+
+impl RnsPoly {
+    /// Decompose integer coefficients into the RNS basis.
+    #[must_use]
+    pub fn from_coefficients(coeffs: &[i128; NTT_DEGREE]) -> Self {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                let p = i128::from(RNS_PRIMES[l]);
+                core::array::from_fn(|i| coeffs[i].rem_euclid(p) as i64)
+            }),
+        }
+    }
+
+    /// NTT-accelerated negacyclic product, per limb.
+    #[must_use]
+    pub fn negacyclic_mul(&self, other: &RnsPoly) -> RnsPoly {
+        RnsPoly {
+            limbs: core::array::from_fn(|l| {
+                negacyclic_mul_mod(&self.limbs[l], &other.limbs[l], RNS_PRIMES[l])
+            }),
+        }
+    }
+
+    /// Reconstruct the coefficient at `index` in `[0, P)` via the CRT.
+    #[must_use]
+    pub fn coefficient(&self, index: usize) -> i128 {
+        let residues = core::array::from_fn(|l| self.limbs[l][index]);
+        RnsInt { residues }.to_int()
+    }
+}

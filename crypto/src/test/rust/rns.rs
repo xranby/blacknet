@@ -69,3 +69,85 @@ fn sub_wraps_correctly() {
     let got = RnsInt::from_int(5).sub(&RnsInt::from_int(8)).to_int();
     assert_eq!(got, (5i128 - 8).rem_euclid(p), "RNS sub must wrap mod P");
 }
+
+// --- NTT-accelerated negacyclic RNS multiply vs schoolbook ------------------
+
+use blacknet_crypto::rns::{NTT_DEGREE, RnsPoly};
+
+const N: usize = NTT_DEGREE;
+
+/// Schoolbook negacyclic convolution mod P (exact, via i128) for small-ish
+/// coefficients so products stay within i128.
+fn schoolbook_negacyclic(a: &[i128; N], b: &[i128; N], p: i128) -> [i128; N] {
+    let mut out = [0i128; N];
+    for i in 0..N {
+        for j in 0..N {
+            let mut k = i + j;
+            let mut sign = 1i128;
+            if k >= N {
+                k -= N;
+                sign = -1; // X^N = -1
+            }
+            out[k] = (out[k] + sign * (a[i] * b[j])).rem_euclid(p);
+        }
+    }
+    out
+}
+
+fn seeded(seed: u64, bound: i128) -> [i128; N] {
+    let mut x = seed | 1;
+    core::array::from_fn(|_| {
+        x = x
+            .wrapping_mul(6364136223846793005)
+            .wrapping_add(1442695040888963407);
+        ((x >> 40) as i128).rem_euclid(bound)
+    })
+}
+
+#[test]
+fn ntt_rns_negacyclic_mul_equals_schoolbook() {
+    // Coefficients up to 2^20 so the schoolbook product (sum of N terms of
+    // ~2^40) stays well within i128 for the exact cross-check.
+    let bound = 1i128 << 20;
+    let a = seeded(11, bound);
+    let b = seeded(22, bound);
+
+    let prod = RnsPoly::from_coefficients(&a).negacyclic_mul(&RnsPoly::from_coefficients(&b));
+    let p = product_modulus();
+    let expect = schoolbook_negacyclic(&a, &b, p);
+
+    for i in 0..N {
+        assert_eq!(
+            prod.coefficient(i),
+            expect[i],
+            "NTT-RNS negacyclic product must equal schoolbook at coeff {i}"
+        );
+    }
+}
+
+// helper to reach the product modulus from the test
+fn product_modulus() -> i128 {
+    use blacknet_crypto::rns::RnsInt;
+    RnsInt::product()
+}
+
+#[test]
+#[ignore = "measurement: NTT-RNS multiply latency at the accumulator modulus"]
+fn measure_ntt_rns_speedup() {
+    use std::time::Instant;
+    let bound = 1i128 << 20;
+    let a = RnsPoly::from_coefficients(&seeded(1, bound));
+    let b = RnsPoly::from_coefficients(&seeded(2, bound));
+    let reps = 100;
+    let t0 = Instant::now();
+    let mut acc = a.clone();
+    for _ in 0..reps {
+        acc = acc.negacyclic_mul(&b);
+    }
+    core::hint::black_box(acc.coefficient(0));
+    let per = t0.elapsed().as_secs_f64() / reps as f64;
+    println!(
+        "MEASURED NTT-RNS negacyclic mul (deg {N}, modulus ~2^88): {:.3} ms",
+        per * 1000.0
+    );
+}
