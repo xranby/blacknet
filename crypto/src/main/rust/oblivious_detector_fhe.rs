@@ -49,6 +49,7 @@ use alloc::vec::Vec;
 
 use crate::algebra::{BalancedRepresentative, IntegerRing, UnivariateRing};
 use crate::blacklemon::{self, DetectionMaterial, detect_params};
+use crate::branchless::{BlAbs, BlOrd};
 use crate::convolution::Negacyclic;
 use crate::lm::LMField;
 use crate::oblivious_retrieval::Clue;
@@ -192,18 +193,23 @@ pub fn client_check_pertinence(rlwe: &Rlwe, enc_d: &Ct) -> bool {
     let d = rlwe.decrypt(enc_d);
     let r = detect_params::R;
     let delta = detect_params::DELTA;
-    for &coeff in &d {
-        let abs = coeff.abs();
-        if !(abs <= r || (delta - abs).abs() <= r) {
-            return false;
-        }
+    // Constant-time: the verdict reveals which messages are the recipient's, so
+    // the scan must not short-circuit. Every coefficient is examined and the
+    // result accumulated with rat4's branchless primitives (BlAbs/BlOrd) and
+    // non-short-circuiting bitwise boolean ops — no early return, no data-
+    // dependent control flow on the decrypted value. (Index comparisons are on
+    // the public position, not on secret data.)
+    let mut ok = true;
+    for (i, &coeff) in d.iter().enumerate() {
+        let abs = coeff.bl_abs();
+        let near_zero = !abs.bl_gt(&r); // abs <= r
+        let near_delta = !(delta - abs).bl_abs().bl_gt(&r); // |delta - abs| <= r
+        let coeff_ok = near_zero | near_delta;
+        // The leading KAPPA coefficients must additionally be near zero.
+        let kappa_violation = (i < detect_params::KAPPA) & !near_zero;
+        ok = ok & coeff_ok & !kappa_violation;
     }
-    for &coeff in d.iter().take(detect_params::KAPPA) {
-        if coeff.abs() > r {
-            return false;
-        }
-    }
-    true
+    ok
 }
 
 /// The recovered balanced coefficients of d (for tests / audit).

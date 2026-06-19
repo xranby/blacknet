@@ -112,6 +112,7 @@ pub fn detect(sk: &SecretKey, ct: &CipherText) -> Option<PlainText> {
 ///
 /// It exposes secret coefficients in the clear and MUST stay client-side; it
 /// exists only so the client can derive its own detection key.
+#[derive(Zeroize)]
 pub struct DetectionMaterial {
     /// Coefficients of the LWE secret `s` (the `ct.b · s` multiplier in detect).
     pub secret: [i32; lpr::D],
