@@ -552,3 +552,108 @@ fn full_bootstrap_data_path() {
         "the constant slot must survive rotation -> extraction -> LWE key-switch"
     );
 }
+
+// --- Programmable bootstrap: functional LUT eval + noise refresh ------------
+
+const BOOT_N: usize = 16; // small LWE dimension for tractable bootstrap tests
+
+// Build a test polynomial encoding a step function over the rotation domain:
+// f = 1 on the first half-slot region, 2 on the second. Negacyclic by
+// construction (upper half is the ring's automatic -f).
+fn step_test_vector() -> [i64; 1024] {
+    let mut tv = [0i64; 1024];
+    for (k, slot) in tv.iter_mut().enumerate() {
+        *slot = if k < 512 { 1 } else { 2 };
+    }
+    tv
+}
+
+// Construct a noiseless LWE mod 2N with chosen phase under a binary secret.
+fn boot_lwe(s: &[i64; BOOT_N], phase: i64, noise: i64, rng: &mut FastDRG) -> ([i64; BOOT_N], i64) {
+    use blacknet_crypto::random::{Distribution, UniformIntDistribution};
+    let two_n = 2 * 1024i64;
+    let mut uid = UniformIntDistribution::<i64, FastDRG>::new(0..two_n);
+    let a: [i64; BOOT_N] = core::array::from_fn(|_| uid.sample(rng));
+    let mut b = phase + noise;
+    for i in 0..BOOT_N {
+        b += a[i] * s[i];
+    }
+    (a, b.rem_euclid(two_n))
+}
+
+#[test]
+#[ignore = "slow: 16-step blind rotation over degree-1024 ring; run with --ignored"]
+fn programmable_bootstrap_evaluates_the_lut() {
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, programmable_bootstrap, sample_extract,
+    };
+    let mut rng = drg(110);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| ((i * 7 + 1) % 2) as i64); // binary
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+    let tv = step_test_vector();
+
+    // Phase in the first region (-> LUT value 1) and second region (-> 2).
+    for &(phase, expected) in &[(200i64, 1i64), (800i64, 2i64)] {
+        let (a, b) = boot_lwe(&secret, phase, 0, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let lwe = sample_extract(&out, 0);
+        let recovered = acc_key.lwe_decrypt(&lwe);
+        // Cross-check against the cleartext rotation of tv by -phase.
+        let clear = rotate_clear(&tv, -phase)[0];
+        assert_eq!(
+            i64::from(recovered),
+            i64::from(clear),
+            "bootstrap must match cleartext LUT lookup"
+        );
+        assert_eq!(i64::from(recovered), expected, "LUT value at phase {phase}");
+    }
+}
+
+#[test]
+#[ignore = "slow: blind rotation; run with --ignored"]
+fn bootstrap_refreshes_noise() {
+    // Soundness: a heavily-noised input still bootstraps to the correct LUT
+    // value. The mod-switch absorbs input noise up to ~half a rotation slot,
+    // and the output noise is FRESH (set by the bootstrap, not the input) -
+    // demonstrated by the output decrypting cleanly despite large input noise.
+    use blacknet_crypto::oblivious_detector_fhe::{
+        Rlwe, bootstrap_keygen, programmable_bootstrap, sample_extract,
+    };
+    let mut rng = drg(111);
+    let acc_key = Rlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &acc_key, &secret);
+    let tv = step_test_vector();
+
+    let phase = 300i64;
+    // Inject input noise far larger than any ciphertext noise would be, but
+    // below the slot half-width, so the rounded phase is unchanged.
+    for &noise in &[0i64, 30, -30, 80, -80] {
+        let (a, b) = boot_lwe(&secret, phase, noise, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let recovered = acc_key.lwe_decrypt(&sample_extract(&out, 0));
+        assert_eq!(
+            i64::from(recovered),
+            1,
+            "noisy input must still yield f(phase)=1 (noise refreshed)"
+        );
+    }
+}
+
+#[test]
+fn modulus_switch_preserves_the_phase_ratio() {
+    use blacknet_crypto::oblivious_detector_fhe::modulus_switch_q_to_2n;
+    // A value at p/Q of the modulus maps to ~p/2N of the rotation domain.
+    let q = 1152921504606847009i64; // LM modulus
+    let two_n = 2048i64;
+    for &frac in &[0i64, 1, 2, 4, 8] {
+        let x = (q / 16) * frac; // frac/16 of the modulus
+        let switched = modulus_switch_q_to_2n(x);
+        let expected = (two_n / 16) * frac; // frac/16 of 2N
+        assert!(
+            (switched - expected).abs() <= 1,
+            "mod-switch must preserve the phase ratio within rounding (got {switched}, want ~{expected})"
+        );
+    }
+}

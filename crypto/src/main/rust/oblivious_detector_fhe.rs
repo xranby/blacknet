@@ -701,3 +701,80 @@ pub fn lwe_keyswitch(ksk: &LweKeySwitchKey, src: &LweCt) -> LweCtKs {
         b: balance_q(acc_b),
     }
 }
+
+// ===========================================================================
+// Programmable bootstrap — functional LUT evaluation with noise refresh.
+//
+// Assembles the primitives (modulus switch -> blind rotation over a
+// bootstrapping key -> sample extraction) into a programmable bootstrap: given
+// an LWE ciphertext of m and a test polynomial encoding a function f, it
+// outputs an RLWE/LWE ciphertext of f(m) whose noise is FRESH (independent of
+// the input noise) — the property that makes a bootstrap *sound* for unbounded
+// computation, and what would let an oblivious detector evaluate the pertinence
+// check homomorphically.
+//
+// Soundness/precision constraints (see the design note for the full analysis):
+//   * The phase must be reduced to the rotation modulus 2N. The message space
+//     therefore satisfies p <= 2N; for N = 1024 that is <= 2048 distinguishable
+//     values. BlackLemon's per-coefficient classification (near 0, near DELTA,
+//     else) maps to phases near 0, near N, and the wide band between — robustly
+//     separated at this resolution.
+//   * Only NEGACYCLIC functions (f(x+N) = -f(x)) are directly representable in
+//     the test polynomial. BlackLemon's pertinence indicator is NOT negacyclic
+//     (it wants the same value at phase 0 and phase N), so a sound functional
+//     bootstrap of it needs a full-domain construction (FDFB) — analysed but
+//     not implemented here.
+
+/// Rotation modulus: a phase is reduced mod 2N before blind rotation.
+const TWO_N: i64 = 2 * N as i64;
+
+/// Modulus-switch a balanced value from `Z_Q` to `Z_{2N}` (rounded). Used to
+/// bring an LWE ciphertext into the rotation domain.
+#[must_use]
+pub fn modulus_switch_q_to_2n(x: i64) -> i64 {
+    let num = i128::from(x) * i128::from(TWO_N);
+    let q = i128::from(Q);
+    // round(x * 2N / Q) with sign-aware rounding
+    let rounded = if num >= 0 {
+        (num + q / 2) / q
+    } else {
+        (num - q / 2) / q
+    };
+    (rounded.rem_euclid(i128::from(TWO_N))) as i64
+}
+
+/// A bootstrapping key: RGSW encryptions (under the accumulator's RLWE key) of
+/// the input LWE secret's bits.
+pub struct BootstrapKey {
+    bsk: KsVec<Rgsw>,
+}
+
+/// Build a bootstrapping key from a binary LWE secret, under the accumulator
+/// RLWE key.
+pub fn bootstrap_keygen<R: UniformGenerator<Output = u8>>(
+    rng: &mut R,
+    accumulator_key: &Rlwe,
+    lwe_secret: &[i64],
+) -> BootstrapKey {
+    BootstrapKey {
+        bsk: lwe_secret
+            .iter()
+            .map(|&b| accumulator_key.rgsw_encrypt(rng, b))
+            .collect(),
+    }
+}
+
+/// Programmable bootstrap. Inputs: a bootstrapping key, a test polynomial `tv`
+/// (degree N, encoding the function over the rotation domain), and an LWE
+/// ciphertext `(lwe_a, lwe_b)` ALREADY in the rotation modulus `2N` with phase
+/// `φ = lwe_b − ⟨lwe_a, s⟩`. Output: an RLWE ciphertext whose constant
+/// coefficient is `tv[φ]` (the LUT value at the encrypted phase), with fresh
+/// noise. Apply [`sample_extract`] at index 0 to get the LWE result.
+#[must_use]
+pub fn programmable_bootstrap(bsk: &BootstrapKey, tv: &[i64; N], lwe_a: &[i64], lwe_b: i64) -> Ct {
+    // ACC = X^{-b} · tv  (trivial, noiseless accumulator rotated by -b)
+    let acc0 = trivial_encrypt(tv);
+    let acc = rotate(&acc0, -lwe_b);
+    // Apply X^{a_i} for each set secret bit: ACC = X^{-b + ⟨a,s⟩}·tv = X^{-φ}·tv
+    blind_rotate(&acc, lwe_a, &bsk.bsk)
+}
