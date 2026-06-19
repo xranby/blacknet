@@ -287,3 +287,7 @@ path = "src/test/rust/oblivious_retrieval.rs"
 [[test]]
 name = "oblivious_detector_fhe"
 path = "src/test/rust/oblivious_detector_fhe.rs"
+
+[[test]]
+name = "ntt_acceleration"
+path = "src/test/rust/ntt_acceleration.rs"
