@@ -279,3 +279,45 @@ fn homomorphic_pertinence_bit_via_half_domain() {
         assert_eq!(pv, pertinent[m], "homomorphic PV for class {m}");
     }
 }
+
+// --- Packing key-switch LWE -> RLWE (circuit-bootstrap prerequisite) ---------
+
+use blacknet_crypto::rns_rlwe::{packing_keyswitch, packing_keyswitch_keygen};
+
+#[test]
+fn packing_keyswitch_lands_message_in_constant_coefficient() {
+    let mut rng = drg(60);
+    let target = RnsRlwe::keygen(&mut rng);
+
+    // Small source LWE key z and a message m, encrypted as a dim-n LWE with
+    // phase = b + <a, z> = Delta*m.
+    const NSRC: usize = 16;
+    use blacknet_crypto::random::{Distribution, UniformIntDistribution};
+    let mut tern = UniformIntDistribution::<i64, FastDRG>::new(-1..=1);
+    let z: [i64; NSRC] = core::array::from_fn(|_| tern.sample(&mut rng));
+    let ksk = packing_keyswitch_keygen(&mut rng, &z, &target);
+
+    let delta = blacknet_crypto::rns_rlwe::delta();
+    let p = {
+        use blacknet_crypto::rns::RnsInt;
+        RnsInt::product()
+    };
+    for &m in &[0i64, 1, 1234, 65000] {
+        // build LWE(m): a uniform, b = Delta*m - <a,z>  (so b + <a,z> = Delta*m)
+        let mut uid = UniformIntDistribution::<i64, FastDRG>::new(0..1_000_000);
+        let a: [i128; NSRC] = core::array::from_fn(|_| i128::from(uid.sample(&mut rng)));
+        let inner: i128 = a
+            .iter()
+            .zip(z.iter())
+            .map(|(ai, zi)| ai * i128::from(*zi))
+            .sum();
+        let b = (delta * i128::from(m) - inner).rem_euclid(p);
+
+        let rlwe = packing_keyswitch(&ksk, &a, b);
+        let recovered = target.decrypt(&rlwe);
+        assert_eq!(
+            recovered[0], m,
+            "packed message in constant coefficient for m={m}"
+        );
+    }
+}

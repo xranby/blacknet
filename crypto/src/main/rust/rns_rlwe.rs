@@ -369,3 +369,90 @@ pub fn half_domain_test_vector(values: &[i64], p: usize) -> [i64; NTT_DEGREE] {
         values[m]
     })
 }
+
+// ===========================================================================
+// Packing key-switch (LWE -> RLWE) — prerequisite for the circuit bootstrap.
+//
+// Turns an LWE ciphertext (phase b + Σ aᵢ zᵢ = Δm) under a small key z into an
+// RLWE ciphertext under the target key s', encrypting m in the constant
+// coefficient. The circuit bootstrap that converts Enc(PV) (LWE) into RGSW(PV)
+// is built from this plus the PBS: each gadget row is a packed bootstrap output.
+//
+// KSK[i][j] is an RLWE encryption (under s') of the RAW value zᵢ·Bʲ in the
+// constant coefficient. Decomposing each aᵢ into gadget digits and recombining
+// against the KSK reconstructs b + Σ aᵢ zᵢ in the constant slot.
+// ===========================================================================
+
+/// Signed gadget digits of a scalar `x` (base `2^GADGET_BITS`).
+fn signed_scalar_digits(mut x: i128) -> [i64; GADGET_DIGITS] {
+    let base: i128 = 1i128 << GADGET_BITS;
+    core::array::from_fn(|_| {
+        let mut r = x.rem_euclid(base);
+        if r > base / 2 {
+            r -= base;
+        }
+        x = (x - r) / base;
+        r as i64
+    })
+}
+
+impl RnsRlwe {
+    /// RLWE encryption with the raw value `value` in the constant coefficient
+    /// (phase = e + value), not Δ-scaled. The gadget rows of a key-switch key.
+    pub fn encrypt_raw_constant<R: UniformGenerator<Output = u8>>(
+        &self,
+        rng: &mut R,
+        value: i128,
+    ) -> RnsCt {
+        let mut ct = self.encrypt_zero(rng);
+        ct.b = ct.b.add(&RnsPoly::constant(value));
+        ct
+    }
+}
+
+/// A packing key-switch key from a small source LWE key `z` (length `n`) to the
+/// target [`RnsRlwe`]. Entry `i·GADGET_DIGITS + j` encrypts `zᵢ·Bʲ`.
+pub struct PackingKeySwitchKey {
+    ksk: Vec<RnsCt>,
+    n: usize,
+}
+
+/// Build a packing key-switch key from source key `z` to `target`.
+pub fn packing_keyswitch_keygen<R: UniformGenerator<Output = u8>>(
+    rng: &mut R,
+    z: &[i64],
+    target: &RnsRlwe,
+) -> PackingKeySwitchKey {
+    let mut ksk = Vec::with_capacity(z.len() * GADGET_DIGITS);
+    for &zi in z {
+        for j in 0..GADGET_DIGITS {
+            let value = i128::from(zi) * (1i128 << (GADGET_BITS * j as u32));
+            ksk.push(target.encrypt_raw_constant(rng, value));
+        }
+    }
+    PackingKeySwitchKey { ksk, n: z.len() }
+}
+
+/// Pack an LWE ciphertext `(lwe_a, lwe_b)` (phase `b + Σ aᵢ zᵢ = Δm`, length
+/// `n`) into an RLWE ciphertext under the target key, encrypting `m` in the
+/// constant coefficient.
+#[must_use]
+#[allow(clippy::needless_range_loop)]
+pub fn packing_keyswitch(ksk: &PackingKeySwitchKey, lwe_a: &[i128], lwe_b: i128) -> RnsCt {
+    let mut acc = RnsCt {
+        a: RnsPoly::zero(),
+        b: RnsPoly::constant(lwe_b),
+    };
+    for i in 0..ksk.n {
+        let digits = signed_scalar_digits(lwe_a[i]);
+        for j in 0..GADGET_DIGITS {
+            let d = i128::from(digits[j]);
+            if d == 0 {
+                continue;
+            }
+            let scaled = ksk.ksk[i * GADGET_DIGITS + j].plain_mul(&RnsPoly::constant(d));
+            acc = acc.add(&scaled);
+        }
+    }
+    acc
+}
