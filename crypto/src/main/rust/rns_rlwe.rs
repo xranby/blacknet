@@ -633,7 +633,7 @@ impl RnsCt2 {
 
 /// Four extra NTT-friendly primes (≡ 1 mod 2N) extending the base RNS basis so
 /// the seven-prime product exceeds the tensor range.
-const EXT_EXTRA_PRIMES: [i64; 4] = [1073707009, 1073698817, 1073692673, 1073682433];
+const EXT_EXTRA_PRIMES: [i64; 4] = [1073692673, 1073668097, 1073651713, 1073643521];
 
 #[inline]
 const fn ext_primes() -> [i64; 7] {
@@ -663,22 +663,28 @@ fn b8_mul_add(d: BigInt<8>, m: u64, a: u64) -> BigInt<8> {
 
 /// Negacyclic convolution residues of two balanced coefficient vectors, one row
 /// per extended prime.
-fn conv_residues(a: &[i128; NTT_DEGREE], b: &[i128; NTT_DEGREE]) -> [[i64; NTT_DEGREE]; 7] {
+fn conv_residues(a: &[i128; NTT_DEGREE], b: &[i128; NTT_DEGREE]) -> Vec<[i64; NTT_DEGREE]> {
     let primes = ext_primes();
-    core::array::from_fn(|pi| {
-        let p = primes[pi];
-        let am: [i64; NTT_DEGREE] = core::array::from_fn(|i| a[i].rem_euclid(i128::from(p)) as i64);
-        let bm: [i64; NTT_DEGREE] = core::array::from_fn(|i| b[i].rem_euclid(i128::from(p)) as i64);
-        crate::rns::negacyclic_mul_mod(&am, &bm, p)
-    })
+    (0..7)
+        .map(|pi| {
+            let p = primes[pi];
+            let am: [i64; NTT_DEGREE] =
+                core::array::from_fn(|i| a[i].rem_euclid(i128::from(p)) as i64);
+            let bm: [i64; NTT_DEGREE] =
+                core::array::from_fn(|i| b[i].rem_euclid(i128::from(p)) as i64);
+            crate::rns::negacyclic_mul_mod(&am, &bm, p)
+        })
+        .collect()
 }
 
-fn add_residues(x: &[[i64; NTT_DEGREE]; 7], y: &[[i64; NTT_DEGREE]; 7]) -> [[i64; NTT_DEGREE]; 7] {
+fn add_residues(x: &[[i64; NTT_DEGREE]], y: &[[i64; NTT_DEGREE]]) -> Vec<[i64; NTT_DEGREE]> {
     let primes = ext_primes();
-    core::array::from_fn(|pi| {
-        let p = primes[pi];
-        core::array::from_fn(|i| (x[pi][i] + y[pi][i]).rem_euclid(p))
-    })
+    (0..7)
+        .map(|pi| {
+            let p = primes[pi];
+            core::array::from_fn(|i| (x[pi][i] + y[pi][i]).rem_euclid(p))
+        })
+        .collect()
 }
 
 /// Precomputed Garner data for the seven-prime extended basis.
@@ -714,7 +720,7 @@ impl GarnerCtx {
     /// Reconstruct the exact SIGNED integer from its seven residues, then BFV-
     /// rescale: `round(D·t/P) mod P`, returned in `[0, P)`.
     #[allow(clippy::needless_range_loop)]
-    fn rescale(&self, residues: &[[i64; NTT_DEGREE]; 7], idx: usize) -> i128 {
+    fn rescale(&self, residues: &[[i64; NTT_DEGREE]], idx: usize) -> i128 {
         // mixed-radix (Garner) digits
         let mut x = [0i64; 7];
         for j in 0..7 {
@@ -748,7 +754,7 @@ impl GarnerCtx {
         signed.rem_euclid(p)
     }
 
-    fn rescale_poly(&self, residues: &[[i64; NTT_DEGREE]; 7]) -> RnsPoly {
+    fn rescale_poly(&self, residues: &[[i64; NTT_DEGREE]]) -> RnsPoly {
         let coeffs: [i128; NTT_DEGREE] = core::array::from_fn(|i| self.rescale(residues, i));
         RnsPoly::from_coefficients(&coeffs)
     }
