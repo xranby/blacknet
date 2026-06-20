@@ -567,3 +567,77 @@ fn front_end_chain_clue_to_pertinence_bit() {
     let pv = key.lwe_decrypt(&sample_extract(&out, 0));
     assert_eq!(pv, pertinent[class], "clue -> Enc(d) -> KS -> PBS -> PV");
 }
+
+// --- exact BlackLemon band classifier at the real modulus q = 65537 ----------
+
+use blacknet_crypto::rns_rlwe::{BAND_PHASE_SHIFT, band_classifier_test_vector};
+
+#[test]
+#[ignore = "slow: 12 blind rotations at q=65537; run with --ignored"]
+fn exact_blacklemon_band_classifier_at_q65537() {
+    let mut rng = drg(120);
+    let key = RnsRlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &key, &secret);
+
+    let q = 65537i64;
+    let two_n = 2 * N as i64;
+    let delta = q / 2; // 32768
+    let r = 40i64; // BlackLemon R
+    let mark = 1i64;
+    let tv = band_classifier_test_vector(mark, 1);
+
+    // exact BlackLemon classification of a balanced coefficient d:
+    //   |d| <= R           -> 0-band (payload bit 0)
+    //   DELTA - |d| <= R   -> 1-band (payload bit 1)
+    //   else               -> out of band (reject)
+    let oracle = |d: i64| -> i32 {
+        let a = d.abs();
+        if a <= r {
+            0
+        } else if delta - a <= r {
+            1
+        } else {
+            -1
+        }
+    };
+
+    // phase of a coefficient after modulus switch (round(d*2N/q)), then the
+    // classifier's N/2 pre-shift folded into the LWE body.
+    let phase_of = |d: i64| -> i64 {
+        let num = d * two_n;
+        let rounded = if num >= 0 {
+            (num + q / 2) / q
+        } else {
+            (num - q / 2) / q
+        };
+        (rounded + BAND_PHASE_SHIFT).rem_euclid(two_n)
+    };
+
+    // sweep: solid 0-band, solid 1-band, and clearly out-of-band values
+    let zero_band = [0i64, 24, 40, -32];
+    let one_band = [delta, delta - 24, delta - 40, -(delta - 16)];
+    let out_band = [96i64, 1000, 16384, -12000];
+
+    for &d in &zero_band {
+        let (a, b) = boot_lwe(&secret, phase_of(d), &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let v = key.lwe_decrypt_signed(&sample_extract(&out, 0));
+        assert_eq!(oracle(d), 0, "oracle sanity 0-band d={d}");
+        assert_eq!(v, mark, "0-band d={d} should classify to +mark");
+    }
+    for &d in &one_band {
+        let (a, b) = boot_lwe(&secret, phase_of(d), &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let v = key.lwe_decrypt_signed(&sample_extract(&out, 0));
+        assert_eq!(oracle(d), 1, "oracle sanity 1-band d={d}");
+        assert_eq!(v, -mark, "1-band d={d} should classify to -mark (antipode)");
+    }
+    for &d in &out_band {
+        let (a, b) = boot_lwe(&secret, phase_of(d), &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let v = key.lwe_decrypt_signed(&sample_extract(&out, 0));
+        assert_eq!(oracle(d), -1, "oracle sanity out-of-band d={d}");
+        assert_eq!(v, 0, "out-of-band d={d} should classify to 0");
+    }
+}

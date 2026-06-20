@@ -836,6 +836,19 @@ impl RnsRlwe {
         }
     }
 
+    /// Decrypt an LWE produced by [`sample_extract`] from this key, returning
+    /// the BALANCED plaintext in `(−t/2, t/2]` (so the band classifier's signed
+    /// `±mark` output can be read off directly).
+    #[must_use]
+    pub fn lwe_decrypt_signed(&self, lwe: &RnsLwe) -> i64 {
+        let v = self.lwe_decrypt(lwe);
+        if i128::from(v) > i128::from(T) / 2 {
+            v - T
+        } else {
+            v
+        }
+    }
+
     /// Decrypt an LWE under a raw `bootstrap_key` (the destination of a
     /// key-switch): `round((b + ⟨a,key⟩)/Δ) mod t`.
     #[must_use]
@@ -877,3 +890,26 @@ pub fn lwe_keyswitch(ksk: &LweKeySwitchKey, lwe: &RnsLwe) -> RnsLwe {
     }
     RnsLwe { a, b }
 }
+
+/// Test vector for the exact BlackLemon band classifier. The phase is pre-shifted
+/// by `N/2` (added to the LWE body before the PBS) so the 0-band lands at `N/2`
+/// and the 1-band at its negacyclic antipode `3N/2`. `mark` is placed in a window
+/// of half-width `half_width` slots around `N/2`. After the bootstrap the constant
+/// coefficient is `+mark` for a 0-band coefficient, `−mark` for a 1-band one
+/// (the antipode flips the sign), and `0` out of band — so the sign is the
+/// BlackLemon payload bit and a non-zero magnitude is the in-band indicator.
+#[must_use]
+pub fn band_classifier_test_vector(mark: i64, half_width: usize) -> [i64; NTT_DEGREE] {
+    let center = NTT_DEGREE / 2;
+    core::array::from_fn(|k| {
+        if k + half_width >= center && k <= center + half_width {
+            mark
+        } else {
+            0
+        }
+    })
+}
+
+/// The `N/2` phase pre-shift the band classifier expects, to be added to the
+/// modulus-switched LWE body before [`programmable_bootstrap`].
+pub const BAND_PHASE_SHIFT: i64 = NTT_DEGREE as i64 / 2;
