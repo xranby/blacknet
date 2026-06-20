@@ -311,3 +311,7 @@ path = "src/test/rust/rns_compaction.rs"
 [[test]]
 name = "bfv"
 path = "src/test/rust/bfv.rs"
+
+[[test]]
+name = "rns_detect"
+path = "src/test/rust/rns_detect.rs"
