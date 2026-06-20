@@ -230,3 +230,142 @@ impl RnsCt {
         }
     }
 }
+
+// ===========================================================================
+// Sample extraction + programmable bootstrap over the RNS ring (step 3 finish).
+//
+// Ports the LM programmable bootstrap onto RnsCt, reusing its sign/index
+// conventions, adapted to this scheme's phase = b + a·s. The PBS evaluates an
+// arbitrary LUT at an encrypted phase with FRESH output noise — the engine that
+// emits the encrypted pertinence bit in step 4.
+// ===========================================================================
+
+/// An LWE ciphertext (dimension N) under an [`RnsRlwe`] key's coefficient
+/// vector: `phase = b + Σ aₗ·sₗ ≈ Δ·m`.
+pub struct RnsLwe {
+    pub a: Vec<i128>,
+    pub b: i128,
+}
+
+/// Extract coefficient `index` of an RLWE ciphertext as an LWE ciphertext under
+/// the key's coefficient vector. With phase `B + A·s`, the j-th coefficient is
+/// `B[j] + Σₗ âₗ sₗ` where `âₗ = A[j−l]` (l ≤ j) and `−A[j−l+N]` (l > j).
+#[must_use]
+pub fn sample_extract(ct: &RnsCt, index: usize) -> RnsLwe {
+    let j = index;
+    let a: Vec<i128> = (0..NTT_DEGREE)
+        .map(|l| {
+            if l <= j {
+                ct.a.balanced_coefficient(j - l)
+            } else {
+                -ct.a.balanced_coefficient(j + NTT_DEGREE - l)
+            }
+        })
+        .collect();
+    RnsLwe {
+        a,
+        b: ct.b.balanced_coefficient(j),
+    }
+}
+
+impl RnsRlwe {
+    /// Decrypt an LWE ciphertext produced by [`sample_extract`] from this key.
+    #[must_use]
+    pub fn lwe_decrypt(&self, lwe: &RnsLwe) -> i64 {
+        let p = RnsInt::product();
+        let mut acc: i128 = lwe.b;
+        for (l, &al) in lwe.a.iter().enumerate() {
+            acc += al * self.s.balanced_coefficient(l);
+            acc = acc.rem_euclid(p);
+        }
+        let mut v = acc.rem_euclid(p);
+        if v > p / 2 {
+            v -= p;
+        }
+        let scaled = ((v as f64) / (delta() as f64)).round() as i128;
+        scaled.rem_euclid(i128::from(T)) as i64
+    }
+}
+
+/// Rotation modulus for the bootstrap.
+const TWO_N: i64 = 2 * NTT_DEGREE as i64;
+
+/// Modulus-switch a balanced `Z_P` value into `Z_{2N}` (rounded).
+#[must_use]
+pub fn modulus_switch_to_2n(x: i128) -> i64 {
+    let p = RnsInt::product();
+    let num = x * i128::from(TWO_N);
+    let rounded = if num >= 0 {
+        (num + p / 2) / p
+    } else {
+        (num - p / 2) / p
+    };
+    rounded.rem_euclid(i128::from(TWO_N)) as i64
+}
+
+/// A bootstrapping key: RGSW (under the accumulator key) of the input LWE
+/// secret's bits.
+pub struct RnsBootstrapKey {
+    pub bsk: Vec<RnsRgsw>,
+}
+
+/// Build a bootstrapping key from a binary LWE secret under the accumulator key.
+pub fn bootstrap_keygen<R: UniformGenerator<Output = u8>>(
+    rng: &mut R,
+    accumulator_key: &RnsRlwe,
+    lwe_secret: &[i64],
+) -> RnsBootstrapKey {
+    RnsBootstrapKey {
+        bsk: lwe_secret
+            .iter()
+            .map(|&b| accumulator_key.rgsw_encrypt(rng, i128::from(b)))
+            .collect(),
+    }
+}
+
+/// Programmable bootstrap. Given a bootstrapping key, a test polynomial `tv`,
+/// and an LWE ciphertext `(lwe_a, lwe_b)` in the rotation modulus `2N` with
+/// phase `φ = lwe_b + Σ lwe_aₗ·secretₗ`, returns an RLWE ciphertext whose
+/// constant coefficient is `tv[φ]` with fresh noise. The rotation exponent is
+/// `−φ` (this scheme's `phase = b + a·s` convention negates `lwe_a`).
+#[must_use]
+pub fn programmable_bootstrap(
+    bsk: &RnsBootstrapKey,
+    tv: &[i64; NTT_DEGREE],
+    lwe_a: &[i64],
+    lwe_b: i64,
+) -> RnsCt {
+    let acc0 = trivial_encrypt(tv);
+    let acc = rotate(&acc0, -lwe_b);
+    let rotations: Vec<i64> = lwe_a.iter().map(|a| -a).collect();
+    blind_rotate(&acc, &rotations, &bsk.bsk)
+}
+
+// ===========================================================================
+// Step 4 — homomorphic pertinence via the half-domain functional bootstrap.
+//
+// The PBS evaluates negacyclic functions directly; BlackLemon's pertinence
+// indicator is even (it wants the same verdict at a phase and its negation), so
+// it is evaluated via the half-domain technique: confine the encoded phase to
+// the lower half-torus [0,N), where the test polynomial may encode an arbitrary
+// function — here the in-band → 1 / else → 0 pertinence predicate. The PBS then
+// emits Enc(PV), the encrypted pertinence bit the compaction consumes.
+// ===========================================================================
+
+/// Encode message `m ∈ [0,p)` as a phase centred in its slot within `[0,N)`.
+#[must_use]
+pub const fn encode_half_domain(m: usize, p: usize) -> i64 {
+    let slot = NTT_DEGREE / p;
+    (m * slot + slot / 2) as i64
+}
+
+/// Test polynomial encoding an arbitrary function `values: [0,p) → Z_t` over the
+/// half-torus (upper half left zero, never indexed).
+#[must_use]
+pub fn half_domain_test_vector(values: &[i64], p: usize) -> [i64; NTT_DEGREE] {
+    let slot = NTT_DEGREE / p;
+    core::array::from_fn(|k| {
+        let m = (k / slot).min(p - 1);
+        values[m]
+    })
+}

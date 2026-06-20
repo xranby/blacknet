@@ -80,7 +80,7 @@ pub fn compact_buckets(payloads: &[RnsCt], pv: &[RnsRgsw], weights: &[Vec<i64>])
 
 // ---- recipient-side recovery: solve the small linear system mod t ----------
 
-fn inv_mod_t(a: i64) -> i64 {
+const fn inv_mod_t(a: i64) -> i64 {
     // t prime -> Fermat inverse
     let mut r = 1i64;
     let mut base = a.rem_euclid(T);

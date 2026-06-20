@@ -10,6 +10,8 @@
 //! Leveled RLWE over the RNS accumulator ring: round-trip and homomorphic
 //! add/sub/plain-mul verified against cleartext, in the sound 2^88 regime.
 
+#![allow(clippy::needless_range_loop)]
+
 use blacknet_crypto::random::FastDRG;
 use blacknet_crypto::rns::{NTT_DEGREE, RnsPoly};
 use blacknet_crypto::rns_rlwe::{RnsRlwe, T};
@@ -198,5 +200,82 @@ fn blind_rotation_matches_cleartext_rotation() {
             got[i], expect[i],
             "blind rotation must equal X^phase·f at {i}"
         );
+    }
+}
+
+// --- Sample extraction + programmable bootstrap (step 3 finish) -------------
+
+use blacknet_crypto::rns_rlwe::{bootstrap_keygen, programmable_bootstrap, sample_extract};
+
+#[test]
+fn sample_extract_roundtrip() {
+    let mut rng = drg(40);
+    let key = RnsRlwe::keygen(&mut rng);
+    let m = seeded_plaintext(77);
+    let ct = key.encrypt(&mut rng, &m);
+    for &k in &[0usize, 1, 17, 500, 1023] {
+        let lwe = sample_extract(&ct, k);
+        assert_eq!(key.lwe_decrypt(&lwe), m[k], "extracted coeff {k}");
+    }
+}
+
+const BOOT_N: usize = 16;
+
+// Build an input LWE (in the 2N domain) with a chosen phase under a binary
+// secret: phase = b + <a, secret>.
+fn boot_lwe(secret: &[i64; BOOT_N], phase: i64, rng: &mut FastDRG) -> ([i64; BOOT_N], i64) {
+    use blacknet_crypto::random::{Distribution, UniformIntDistribution};
+    let mut uid = UniformIntDistribution::<i64, FastDRG>::new(0..(2 * N as i64));
+    let a: [i64; BOOT_N] = core::array::from_fn(|_| uid.sample(rng));
+    let inner: i64 = a.iter().zip(secret.iter()).map(|(x, s)| x * s).sum();
+    let b = (phase - inner).rem_euclid(2 * N as i64);
+    (a, b)
+}
+
+#[test]
+#[ignore = "slow: blind rotation over N=1024; run with --ignored"]
+fn programmable_bootstrap_evaluates_lut() {
+    let mut rng = drg(41);
+    let key = RnsRlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &key, &secret);
+
+    // A negacyclic test vector: tv[k] = k mod small range on the lower half.
+    let tv: [i64; N] = core::array::from_fn(|k| if k < N { (k as i64 / 64) % 7 } else { 0 });
+
+    for &phase in &[100i64, 300, 700] {
+        let (a, b) = boot_lwe(&secret, phase, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let got = key.lwe_decrypt(&sample_extract(&out, 0));
+        assert_eq!(
+            got, tv[phase as usize],
+            "PBS must evaluate tv at phase {phase}"
+        );
+    }
+}
+
+// --- Step 4: homomorphic pertinence bit via half-domain PBS -----------------
+
+use blacknet_crypto::rns_rlwe::{encode_half_domain, half_domain_test_vector};
+
+#[test]
+#[ignore = "slow: blind rotation; run with --ignored"]
+fn homomorphic_pertinence_bit_via_half_domain() {
+    let mut rng = drg(45);
+    let key = RnsRlwe::keygen(&mut rng);
+    let secret: [i64; BOOT_N] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &key, &secret);
+
+    // Pertinence predicate over p=8 classes: in-band classes {0,3,5} -> PV=1.
+    let p = 8;
+    let pertinent = [1i64, 0, 0, 1, 0, 1, 0, 0];
+    let tv = half_domain_test_vector(&pertinent, p);
+
+    for m in 0..p {
+        let phase = encode_half_domain(m, p);
+        let (a, b) = boot_lwe(&secret, phase, &mut rng);
+        let out = programmable_bootstrap(&bsk, &tv, &a, b);
+        let pv = key.lwe_decrypt(&sample_extract(&out, 0));
+        assert_eq!(pv, pertinent[m], "homomorphic PV for class {m}");
     }
 }

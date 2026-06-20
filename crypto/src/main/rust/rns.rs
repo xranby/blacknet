@@ -264,7 +264,7 @@ impl RnsPoly {
 
     /// The zero polynomial.
     #[must_use]
-    pub fn zero() -> Self {
+    pub const fn zero() -> Self {
         RnsPoly {
             limbs: [[0; NTT_DEGREE]; 3],
         }

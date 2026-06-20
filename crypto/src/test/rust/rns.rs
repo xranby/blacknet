@@ -9,6 +9,8 @@
 
 //! RNS arithmetic verified against exact integer arithmetic mod P.
 
+#![allow(clippy::needless_range_loop)]
+
 use blacknet_crypto::rns::{RNS_PRIMES, RnsInt};
 
 #[test]
