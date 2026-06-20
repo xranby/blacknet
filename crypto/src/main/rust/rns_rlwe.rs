@@ -28,7 +28,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::random::UniformGenerator;
-use crate::rns::{GADGET_BITS, GADGET_DIGITS, NTT_DEGREE, RnsInt, RnsPoly};
+use crate::rns::{GADGET_BITS, GADGET_DIGITS, NTT_DEGREE, RNS_PRIMES, RnsInt, RnsPoly};
 
 /// Plaintext modulus (matches BlackLemon's clue ring).
 pub const T: i64 = 65537;
@@ -540,7 +540,7 @@ fn rescale_coeff(d: BigInt<8>) -> i128 {
     num += b16_from_u128((p / 2) as u128);
     // floor(num / P) via sequential division by the three RNS primes
     let mut q = num;
-    for &prime in &crate::rns::RNS_PRIMES {
+    for &prime in &RNS_PRIMES {
         q /= prime as u64;
     }
     let v = b16_low_u128(q) as i128; // |result| < 2^112 fits i128
@@ -553,10 +553,10 @@ fn rescale_poly(acc: &[BigInt<8>; NTT_DEGREE]) -> RnsPoly {
     RnsPoly::from_coefficients(&coeffs)
 }
 
-/// BFV ciphertext×ciphertext multiply at the 2^88 modulus. Returns a degree-2
-/// ciphertext encrypting `m₁·m₂` (the negacyclic product mod t).
+/// Reference BFV multiply: exact O(N²) bigint convolution. Kept as the
+/// correctness oracle for the fast NTT version (`bfv_mul_rns`).
 #[must_use]
-pub fn bfv_mul_rns(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
+pub fn bfv_mul_rns_ref(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
     // phase = b + a·s, so (c0,c1) := (b,a).
     let xb: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.b.balanced_coefficient(i));
     let xa: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.a.balanced_coefficient(i));
@@ -616,5 +616,161 @@ impl RnsCt2 {
             c1: self.c1.add(&other.c1),
             c2: self.c2.add(&other.c2),
         }
+    }
+}
+
+// ===========================================================================
+// Fast BFV multiply: the tensor via an extended-basis RNS-NTT.
+//
+// The exact signed tensor coefficient fits in (−2^185, 2^185); choosing seven
+// NTT primes (the three base RNS primes plus four more) whose product Q_ext ≈
+// 2^208 exceeds 2·2^185 lets us compute each tensor polynomial mod every prime
+// by an O(N log N) negacyclic NTT, then reconstruct the exact signed integer per
+// coefficient by Garner's algorithm (mixed-radix CRT, only u64 modular ops).
+// Only the rescale round(D·t/P) is bigint. This replaces the O(N²) bigint
+// convolution of `bfv_mul_rns_ref` and is validated to agree with it bit-for-bit.
+// ===========================================================================
+
+/// Four extra NTT-friendly primes (≡ 1 mod 2N) extending the base RNS basis so
+/// the seven-prime product exceeds the tensor range.
+const EXT_EXTRA_PRIMES: [i64; 4] = [1073707009, 1073698817, 1073692673, 1073682433];
+
+#[inline]
+const fn ext_primes() -> [i64; 7] {
+    [
+        RNS_PRIMES[0],
+        RNS_PRIMES[1],
+        RNS_PRIMES[2],
+        EXT_EXTRA_PRIMES[0],
+        EXT_EXTRA_PRIMES[1],
+        EXT_EXTRA_PRIMES[2],
+        EXT_EXTRA_PRIMES[3],
+    ]
+}
+
+fn b16_to_b8_low(x: BigInt<16>) -> BigInt<8> {
+    let bytes = x.to_le_bytes::<128>();
+    let mut lo = [0u8; 64];
+    lo.copy_from_slice(&bytes[..64]);
+    BigInt::<8>::from_le_bytes::<64>(lo)
+}
+
+/// `d · m + a` for `m, a` small (u64), result kept at 512 bits.
+fn b8_mul_add(d: BigInt<8>, m: u64, a: u64) -> BigInt<8> {
+    let prod = d.widening_mul::<8, 16>(BigInt::<8>::from(m));
+    b16_to_b8_low(prod + b16_from_u128(u128::from(a)))
+}
+
+/// Negacyclic convolution residues of two balanced coefficient vectors, one row
+/// per extended prime.
+fn conv_residues(a: &[i128; NTT_DEGREE], b: &[i128; NTT_DEGREE]) -> [[i64; NTT_DEGREE]; 7] {
+    let primes = ext_primes();
+    core::array::from_fn(|pi| {
+        let p = primes[pi];
+        let am: [i64; NTT_DEGREE] = core::array::from_fn(|i| a[i].rem_euclid(i128::from(p)) as i64);
+        let bm: [i64; NTT_DEGREE] = core::array::from_fn(|i| b[i].rem_euclid(i128::from(p)) as i64);
+        crate::rns::negacyclic_mul_mod(&am, &bm, p)
+    })
+}
+
+fn add_residues(x: &[[i64; NTT_DEGREE]; 7], y: &[[i64; NTT_DEGREE]; 7]) -> [[i64; NTT_DEGREE]; 7] {
+    let primes = ext_primes();
+    core::array::from_fn(|pi| {
+        let p = primes[pi];
+        core::array::from_fn(|i| (x[pi][i] + y[pi][i]).rem_euclid(p))
+    })
+}
+
+/// Precomputed Garner data for the seven-prime extended basis.
+struct GarnerCtx {
+    primes: [i64; 7],
+    inv: [[i64; 7]; 7], // inv[i][j] = (p_i)^{-1} mod p_j, for i < j
+    q_ext: BigInt<8>,
+    q_half: BigInt<8>,
+}
+
+impl GarnerCtx {
+    fn new() -> Self {
+        let primes = ext_primes();
+        let mut inv = [[0i64; 7]; 7];
+        for i in 0..7 {
+            for j in (i + 1)..7 {
+                inv[i][j] = crate::rns::inv_mod(primes[i].rem_euclid(primes[j]), primes[j]);
+            }
+        }
+        let mut q_ext = BigInt::<8>::from(1u64);
+        for &p in &primes {
+            q_ext = b8_mul_add(q_ext, p as u64, 0);
+        }
+        let q_half = q_ext >> 1u64;
+        GarnerCtx {
+            primes,
+            inv,
+            q_ext,
+            q_half,
+        }
+    }
+
+    /// Reconstruct the exact SIGNED integer from its seven residues, then BFV-
+    /// rescale: `round(D·t/P) mod P`, returned in `[0, P)`.
+    #[allow(clippy::needless_range_loop)]
+    fn rescale(&self, residues: &[[i64; NTT_DEGREE]; 7], idx: usize) -> i128 {
+        // mixed-radix (Garner) digits
+        let mut x = [0i64; 7];
+        for j in 0..7 {
+            let pj = self.primes[j];
+            let mut xj = residues[j][idx].rem_euclid(pj);
+            for i in 0..j {
+                let diff = (xj - x[i]).rem_euclid(pj);
+                xj = ((i128::from(diff) * i128::from(self.inv[i][j])).rem_euclid(i128::from(pj)))
+                    as i64;
+            }
+            x[j] = xj;
+        }
+        // Horner: D = (((x6)·p5 + x5)·p4 + …)·p0 + x0  (unsigned, in [0, Q_ext))
+        let mut d = BigInt::<8>::from(x[6] as u64);
+        for j in (0..6).rev() {
+            d = b8_mul_add(d, self.primes[j] as u64, x[j] as u64);
+        }
+        // balance to signed magnitude
+        let neg = d > self.q_half;
+        let mag = if neg { self.q_ext - d } else { d };
+        // round(mag·t + P/2) / P  with P = base-3 product (sequential Div<u64>)
+        let p = RnsInt::product();
+        let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T as u64));
+        num += b16_from_u128((p / 2) as u128);
+        let mut q = num;
+        for &prime in &RNS_PRIMES {
+            q /= prime as u64;
+        }
+        let v = b16_low_u128(q) as i128;
+        let signed = if neg { -v } else { v };
+        signed.rem_euclid(p)
+    }
+
+    fn rescale_poly(&self, residues: &[[i64; NTT_DEGREE]; 7]) -> RnsPoly {
+        let coeffs: [i128; NTT_DEGREE] = core::array::from_fn(|i| self.rescale(residues, i));
+        RnsPoly::from_coefficients(&coeffs)
+    }
+}
+
+/// Fast BFV ciphertext×ciphertext multiply at the 2^88 modulus (extended-basis
+/// NTT tensor). Returns a degree-2 ciphertext encrypting `m₁·m₂`.
+#[must_use]
+pub fn bfv_mul_rns(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
+    let xb: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.b.balanced_coefficient(i));
+    let xa: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.a.balanced_coefficient(i));
+    let yb: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.b.balanced_coefficient(i));
+    let ya: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.a.balanced_coefficient(i));
+
+    let t0 = conv_residues(&xb, &yb); // c0·c0'
+    let t1 = add_residues(&conv_residues(&xb, &ya), &conv_residues(&xa, &yb)); // c0·c1'+c1·c0'
+    let t2 = conv_residues(&xa, &ya); // c1·c1'
+
+    let g = GarnerCtx::new();
+    RnsCt2 {
+        c0: g.rescale_poly(&t0),
+        c1: g.rescale_poly(&t1),
+        c2: g.rescale_poly(&t2),
     }
 }

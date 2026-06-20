@@ -36,7 +36,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::rns::{NTT_DEGREE, RnsPoly};
-use crate::rns_rlwe::{RnsCt, RnsRgsw, T, external_product};
+use crate::rns_rlwe::{RnsCt, RnsCt2, RnsRgsw, T, bfv_mul_rns, external_product};
 
 /// A public Vandermonde weight matrix: `W[j][i] = (j+1)^i mod t`. Any `k̄`
 /// distinct columns are linearly independent over `Z_t`, so the recipient can
@@ -68,6 +68,33 @@ pub fn compact_buckets(payloads: &[RnsCt], pv: &[RnsRgsw], weights: &[Vec<i64>])
             for (i, payload) in payloads.iter().enumerate() {
                 let weighted = payload.plain_mul(&RnsPoly::constant(i128::from(wrow[i])));
                 let term = external_product(&pv[i], &weighted);
+                acc = Some(match acc {
+                    Some(a) => a.add(&term),
+                    None => term,
+                });
+            }
+            acc.expect("at least one message")
+        })
+        .collect()
+}
+
+/// Oblivious compaction via BFV multiply — the connector for an *obliviously
+/// produced* pertinence bit. Takes encrypted pertinence as RLWE `Enc(PVᵢ)` (the
+/// direct output of the step-4 PBS), NOT `RGSW(PVᵢ)`: a circuit-bootstrap RGSW
+/// uses a coarse gadget and cannot multiply a message-bearing ciphertext
+/// (recomposition error ≫ message scale — see `rns_rlwe`), so the masking must
+/// be a BFV ciphertext×ciphertext multiply. Each `bucketⱼ = Σᵢ PVᵢ·W[j][i]·
+/// payloadᵢ` is a sum of BFV products; the result is `m = O(k̄)` degree-2
+/// ciphertexts (decrypt with `s²`). The node holds only `Enc(PV)` and
+/// `Enc(payload)` — it learns neither the matches nor the contents.
+#[must_use]
+pub fn compact_buckets_bfv(payloads: &[RnsCt], pv: &[RnsCt], weights: &[Vec<i64>]) -> Vec<RnsCt2> {
+    weights
+        .iter()
+        .map(|wrow| {
+            let mut acc: Option<RnsCt2> = None;
+            for (i, payload) in payloads.iter().enumerate() {
+                let term = bfv_mul_rns(&pv[i], payload).scalar_mul(i128::from(wrow[i]));
                 acc = Some(match acc {
                     Some(a) => a.add(&term),
                     None => term,

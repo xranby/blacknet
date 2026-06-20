@@ -385,24 +385,12 @@ fn bfv_oblivious_select_at_2pow88() {
     assert!(sel0.iter().all(|&v| v == 0), "PV=0 masks to zero at 2^88");
 }
 
-use blacknet_crypto::rns_rlwe::RnsCt2;
-
-fn inv_mod_t(a: i64) -> i64 {
-    let t = 65537i64;
-    let (mut r, mut b, mut e) = (1i64, a.rem_euclid(t), t - 2);
-    while e > 0 {
-        if e & 1 == 1 {
-            r = (r * b).rem_euclid(t);
-        }
-        b = (b * b).rem_euclid(t);
-        e >>= 1;
-    }
-    r
-}
-
 #[test]
-#[ignore = "slow: bigint BFV mult over degree-1024 at 2^88; run with --ignored"]
 fn oblivious_bandwidth_lite_compaction_at_2pow88() {
+    use blacknet_crypto::rns_compaction::{
+        compact_buckets_bfv, recover_pertinent_payloads, vandermonde_weights,
+    };
+
     let mut rng = drg(73);
     let key = RnsRlwe::keygen(&mut rng);
     let t = 65537i64;
@@ -416,7 +404,8 @@ fn oblivious_bandwidth_lite_compaction_at_2pow88() {
     let payloads_pt: Vec<[i64; 1024]> = (0..N_MSG).map(|i| mk(i as i64 + 1)).collect();
     let is_pert = |i: usize| support.contains(&i);
 
-    // Encrypt payloads AND the pertinence bits -> the node never sees either.
+    // Encrypt payloads AND the pertinence bits as RLWE Enc(PV) (the obliviously-
+    // producible step-4 output). The node never sees PV or the payloads.
     let payloads: Vec<_> = payloads_pt
         .iter()
         .map(|m| key.encrypt(&mut rng, m))
@@ -429,73 +418,74 @@ fn oblivious_bandwidth_lite_compaction_at_2pow88() {
         })
         .collect();
 
-    // k Vandermonde rows.
-    let weights: Vec<Vec<i64>> = (0..k)
-        .map(|j| {
-            let base = (j as i64 + 1) % t;
-            let mut row = Vec::new();
-            let mut p = 1i64;
-            for _ in 0..N_MSG {
-                row.push(p);
-                p = (p * base).rem_euclid(t);
-            }
-            row
-        })
-        .collect();
-
-    // bucket_j = Σ_i PV_i · w_ji · payload_i  (all homomorphic, PV encrypted)
-    let buckets: Vec<RnsCt2> = (0..k)
-        .map(|j| {
-            let mut acc: Option<RnsCt2> = None;
-            for i in 0..N_MSG {
-                let term = bfv_mul_rns(&pv[i], &payloads[i]).scalar_mul(i128::from(weights[j][i]));
-                acc = Some(match acc {
-                    Some(a) => a.add(&term),
-                    None => term,
-                });
-            }
-            acc.unwrap()
-        })
-        .collect();
-    assert_eq!(buckets.len(), k);
+    // The actual library pipeline: public weights -> homomorphic buckets ->
+    // decrypt (degree-2) -> recipient solve.
+    let weights = vandermonde_weights(k, N_MSG);
+    let buckets = compact_buckets_bfv(&payloads, &pv, &weights);
+    assert_eq!(buckets.len(), k, "digest is k buckets, independent of N");
 
     let bucket_pt: Vec<[i64; 1024]> = buckets.iter().map(|b| key.decrypt2(b)).collect();
+    let recovered = recover_pertinent_payloads(&bucket_pt, &support, &weights);
 
-    // invert the k×k support submatrix mod t, recover the pertinent payloads
-    let mut m: Vec<Vec<i64>> = (0..k)
-        .map(|j| support.iter().map(|&i| weights[j][i] % t).collect())
-        .collect();
-    let mut inv: Vec<Vec<i64>> = (0..k)
-        .map(|i| (0..k).map(|j| i64::from(i == j)).collect())
-        .collect();
-    for col in 0..k {
-        let pinv = inv_mod_t(m[col][col]);
-        for j in 0..k {
-            m[col][j] = (m[col][j] * pinv).rem_euclid(t);
-            inv[col][j] = (inv[col][j] * pinv).rem_euclid(t);
-        }
-        for r in 0..k {
-            if r != col {
-                let f = m[r][col];
-                for j in 0..k {
-                    m[r][j] = (m[r][j] - f * m[col][j]).rem_euclid(t);
-                    inv[r][j] = (inv[r][j] - f * inv[col][j]).rem_euclid(t);
-                }
-            }
-        }
-    }
     for (c, &i) in support.iter().enumerate() {
-        let recovered: Vec<i64> = (0..1024)
-            .map(|pos| {
-                (0..k).fold(0i64, |acc, j| {
-                    (acc + inv[c][j] * bucket_pt[j][pos]).rem_euclid(t)
-                })
-            })
-            .collect();
         assert_eq!(
-            recovered,
+            recovered[c].to_vec(),
             payloads_pt[i].to_vec(),
             "recovered full payload {i} at 2^88"
         );
     }
+}
+
+use blacknet_crypto::rns_rlwe::bfv_mul_rns_ref;
+use std::time::Instant;
+
+#[test]
+fn bfv_fast_matches_reference_and_cleartext() {
+    let mut rng = drg(81);
+    let key = RnsRlwe::keygen(&mut rng);
+    // full-entropy operands (uniform masks) so the tensor exercises the full range
+    let a: [i64; 1024] = core::array::from_fn(|i| ((i * 31 + 7) % 65537) as i64);
+    let b: [i64; 1024] = core::array::from_fn(|i| ((i * 17 + 3) % 65537) as i64);
+    let ca = key.encrypt(&mut rng, &a);
+    let cb = key.encrypt(&mut rng, &b);
+
+    let t0 = Instant::now();
+    let fast = bfv_mul_rns(&ca, &cb);
+    let dt_fast = t0.elapsed();
+    let t1 = Instant::now();
+    let refr = bfv_mul_rns_ref(&ca, &cb);
+    let dt_ref = t1.elapsed();
+
+    // fast must equal the reference bit-for-bit after decryption
+    assert_eq!(
+        key.decrypt2(&fast).to_vec(),
+        key.decrypt2(&refr).to_vec(),
+        "fast != ref"
+    );
+
+    // and both must equal the cleartext negacyclic product mod t
+    let t = 65537i64;
+    let mut expect = [0i64; 1024];
+    for i in 0..1024 {
+        for j in 0..1024 {
+            let mut k = i + j;
+            let mut p = a[i] * b[j];
+            if k >= 1024 {
+                k -= 1024;
+                p = -p;
+            }
+            expect[k] = (expect[k] + p).rem_euclid(t);
+        }
+    }
+    assert_eq!(
+        key.decrypt2(&fast).to_vec(),
+        expect.to_vec(),
+        "fast != cleartext"
+    );
+    println!(
+        "fast {:?}  ref {:?}  speedup {:.1}x",
+        dt_fast,
+        dt_ref,
+        dt_ref.as_secs_f64() / dt_fast.as_secs_f64()
+    );
 }

@@ -135,7 +135,7 @@ pub const GADGET_BITS: u32 = 23;
 pub const GADGET_DIGITS: usize = 4;
 
 #[inline]
-fn inv_mod(a: i64, p: i64) -> i64 {
+pub fn inv_mod(a: i64, p: i64) -> i64 {
     powmod(a, p - 2, p) // p prime
 }
 
@@ -187,7 +187,11 @@ fn ntt_inplace(a: &mut [i64; NTT_DEGREE], root: i64, p: i64) {
 
 /// Negacyclic convolution `a * b mod (X^N + 1, p)` via NTT: ψ-weight, length-N
 /// cyclic NTT, pointwise product, inverse NTT, ψ-unweight.
-fn negacyclic_mul_mod(a: &[i64; NTT_DEGREE], b: &[i64; NTT_DEGREE], p: i64) -> [i64; NTT_DEGREE] {
+pub fn negacyclic_mul_mod(
+    a: &[i64; NTT_DEGREE],
+    b: &[i64; NTT_DEGREE],
+    p: i64,
+) -> [i64; NTT_DEGREE] {
     let n = NTT_DEGREE;
     let psi = negacyclic_root(p);
     let psi_inv = inv_mod(psi, p);
