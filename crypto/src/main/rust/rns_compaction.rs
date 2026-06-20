@@ -192,3 +192,46 @@ pub fn recover_pertinent_payloads(
     }
     out
 }
+
+// ===========================================================================
+// Payload limb codec (path 2 toward a secure, fast parameter set).
+//
+// The BFV multiply's noise scales with the plaintext modulus t. Measured in-tree:
+// a 16-message weighted compaction sum is ~2^46 at t=65537 but ~2^32 at t=257.
+// The smaller figure fits a much smaller ciphertext modulus (P ~ 2^48), which is
+// secure at the degree N=2048 (HE standard: log q <= 54), i.e. only 2x today's
+// degree instead of the 4x that t=65537 forces. The price is carrying each
+// payload as base-`base` limbs (each coefficient < base) so it fits the t=257
+// compaction ring; the recipient recombines the limbs after recovery.
+// ===========================================================================
+
+/// Split a payload into `n_limbs` base-`base` limbs (each coefficient `< base`).
+/// `base.pow(n_limbs)` must exceed the maximum coefficient. Least-significant
+/// limb first.
+#[must_use]
+pub fn split_limbs(
+    coeffs: &[i64; NTT_DEGREE],
+    base: i64,
+    n_limbs: usize,
+) -> Vec<[i64; NTT_DEGREE]> {
+    (0..n_limbs)
+        .map(|j| {
+            let div = base.pow(j as u32);
+            core::array::from_fn(|i| (coeffs[i] / div).rem_euclid(base))
+        })
+        .collect()
+}
+
+/// Recombine base-`base` limbs (least-significant first) into the payload.
+#[must_use]
+pub fn join_limbs(limbs: &[[i64; NTT_DEGREE]], base: i64) -> [i64; NTT_DEGREE] {
+    core::array::from_fn(|i| {
+        let mut v = 0i64;
+        let mut p = 1i64;
+        for limb in limbs {
+            v += limb[i] * p;
+            p *= base;
+        }
+        v
+    })
+}

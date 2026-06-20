@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BlackLemon InstantOMR — Blacknet</title>
+<style>
+  :root{
+    --void:#060608; --panel:#0B0C11; --hair:#23262F; --hair-soft:#15171E;
+    --ink:#ECEEF2; --mut:#8A90A0; --dim:#565C6B;
+    --lemon:#E8D44D; --lemon-soft:rgba(232,212,77,.13); --lemon-line:rgba(232,212,77,.45);
+    --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .stage{position:relative;min-height:100%;padding:64px 22px 40px;overflow:hidden}
+  /* ambient lattice + black-hole vignette */
+  .stage::before{content:"";position:absolute;inset:0;z-index:0;
+    background-image:radial-gradient(circle at center, rgba(255,255,255,.045) .8px, transparent .9px);
+    background-size:26px 26px;opacity:.5;
+    -webkit-mask-image:radial-gradient(120% 80% at 50% 18%, #000 35%, transparent 78%);
+            mask-image:radial-gradient(120% 80% at 50% 18%, #000 35%, transparent 78%);}
+  .stage::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(60% 45% at 50% 8%, rgba(232,212,77,.06), transparent 60%),
+               radial-gradient(80% 60% at 50% 120%, #000 30%, transparent 70%);}
+  .poster{position:relative;z-index:1;max-width:860px;margin:0 auto}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.34em;text-transform:uppercase;
+    color:var(--lemon);display:flex;align-items:center;gap:12px}
+  .eyebrow::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,var(--lemon-line),transparent)}
+  h1{font-family:var(--mono);font-weight:700;font-size:clamp(34px,7vw,58px);line-height:.98;
+    letter-spacing:-.02em;margin:20px 0 0}
+  h1 .lo{color:var(--mut);font-weight:500}
+  .thesis{font-size:clamp(17px,2.4vw,21px);line-height:1.5;color:var(--ink);margin:18px 0 0;max-width:60ch}
+  .thesis b{color:var(--lemon);font-weight:600}
+  .sub{color:var(--mut);font-size:15px;line-height:1.55;margin:10px 0 0;max-width:64ch}
+
+  /* hero: the q-ring */
+  .hero{margin:38px 0 8px;border:1px solid var(--hair);border-radius:14px;background:
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 60%), var(--panel);
+    padding:14px 14px 6px;position:relative}
+  .hero .cap{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--mut);
+    padding:8px 8px 12px;line-height:1.5}
+  .hero .cap b{color:var(--ink);font-weight:600}
+  svg{display:block;width:100%;height:auto}
+
+  /* pipeline */
+  .rail{margin:30px 0 0;border-top:1px solid var(--hair)}
+  .step{display:grid;grid-template-columns:54px 1fr;gap:18px;padding:20px 4px;
+    border-bottom:1px solid var(--hair-soft);align-items:start}
+  .num{font-family:var(--mono);font-size:13px;color:var(--lemon);padding-top:3px;letter-spacing:.04em}
+  .step h3{font-family:var(--mono);font-size:15px;font-weight:600;margin:0;letter-spacing:.01em}
+  .step p{margin:7px 0 0;color:var(--mut);font-size:14.5px;line-height:1.55;max-width:62ch}
+  .step p code{font-family:var(--mono);font-size:12.5px;color:#C9CEDA;background:#13151C;
+    padding:1px 6px;border-radius:5px;border:1px solid var(--hair-soft)}
+  .step .who{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;
+    color:var(--dim);display:block;margin:9px 0 0}
+
+  /* guarantee strip */
+  .guard{margin:30px 0 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;
+    background:var(--hair);border:1px solid var(--hair);border-radius:12px;overflow:hidden}
+  .cell{background:var(--panel);padding:18px 16px}
+  .cell .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .cell .v{font-size:16px;font-weight:600;margin:8px 0 0;line-height:1.35}
+  .cell .v .x{color:var(--lemon)}
+  .blind{margin:22px 0 0;border:1px solid var(--lemon-line);border-radius:12px;background:var(--lemon-soft);
+    padding:16px 18px;display:flex;gap:14px;align-items:flex-start}
+  .blind .ic{font-family:var(--mono);color:var(--lemon);font-size:18px;line-height:1.1}
+  .blind p{margin:0;font-size:14.5px;line-height:1.55;color:var(--ink)}
+  .blind b{color:var(--lemon);font-weight:600}
+
+  footer{margin:30px 0 0;border-top:1px solid var(--hair);padding-top:16px;display:flex;
+    flex-wrap:wrap;gap:8px 20px;justify-content:space-between;align-items:baseline}
+  footer .brand{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--mut)}
+  footer .brand b{color:var(--ink)}
+  footer .note{font-size:11.5px;color:var(--dim);max-width:50ch;line-height:1.5}
+  @media(max-width:560px){.guard{grid-template-columns:1fr}.step{grid-template-columns:40px 1fr;gap:12px}}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="poster">
+
+    <div class="eyebrow">Blacknet · Oblivious Message Retrieval</div>
+    <h1>BlackLemon<br><span class="lo">InstantOMR</span></h1>
+    <p class="thesis">Find what's yours in the dark. <b>The node scans every message for you — and learns nothing:</b> not your key, not which messages match, not what they say.</p>
+    <p class="sub">On a public ledger, every message is visible to everyone. OMR lets a recipient outsource the search for their own mail to an untrusted node, using post-quantum lattice encryption so the node computes on ciphertext it can never open.</p>
+
+    <!-- HERO: the coefficient ring mod q with the two pertinence bands -->
+    <div class="hero">
+      <svg viewBox="0 0 860 460" role="img" aria-label="The coefficient ring mod q. A pertinent message lands every coefficient in one of two narrow bands; everything else is noise.">
+        <defs>
+          <radialGradient id="halo" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="rgba(232,212,77,.10)"/>
+            <stop offset="100%" stop-color="transparent"/>
+          </radialGradient>
+        </defs>
+        <text x="30" y="34" fill="#8A90A0" font-family="ui-monospace,monospace" font-size="12.5" letter-spacing="2">PERTINENCE  =  EVERY  COEFFICIENT  IN  A  BAND</text>
+
+        <g transform="translate(430,250)">
+          <circle r="180" fill="url(#halo)"/>
+          <!-- the ring: coefficients of d mod q -->
+          <circle r="150" fill="none" stroke="#2B2F3A" stroke-width="1.4"/>
+          <!-- noise scatter (what the node sees) rendered by script into this group -->
+          <g id="noise"></g>
+
+          <!-- 0-band at angle 0 (right) -->
+          <path d="M 150 0 A 150 150 0 0 0 142.6 -46.4 M 150 0 A 150 150 0 0 1 142.6 46.4"
+                fill="none" stroke="#E8D44D" stroke-width="6" stroke-linecap="round" opacity=".95"/>
+          <!-- 1-band at angle 180 (left, the antipode) -->
+          <path d="M -150 0 A 150 150 0 0 1 -142.6 -46.4 M -150 0 A 150 150 0 0 0 -142.6 46.4"
+                fill="none" stroke="#E8D44D" stroke-width="6" stroke-linecap="round" opacity=".95"/>
+          <!-- band markers -->
+          <circle cx="150" cy="0" r="4.5" fill="#E8D44D"/>
+          <circle cx="-150" cy="0" r="4.5" fill="#E8D44D"/>
+
+          <!-- antipode axis -->
+          <line x1="-150" y1="0" x2="150" y2="0" stroke="#E8D44D" stroke-width="1" stroke-dasharray="3 6" opacity=".4"/>
+
+          <text x="0" y="-6" text-anchor="middle" fill="#8A90A0" font-family="ui-monospace,monospace" font-size="12">coefficients of</text>
+          <text x="0" y="13" text-anchor="middle" fill="#ECEEF2" font-family="ui-monospace,monospace" font-size="14" font-weight="700">d  mod q</text>
+          <text x="0" y="31" text-anchor="middle" fill="#565C6B" font-family="ui-monospace,monospace" font-size="11">q = 65537</text>
+        </g>
+
+        <!-- band labels -->
+        <g font-family="ui-monospace,monospace">
+          <text x="648" y="246" fill="#E8D44D" font-size="13" font-weight="700">0-band</text>
+          <text x="648" y="265" fill="#8A90A0" font-size="11.5">|d| ≤ R  →  bit 0</text>
+          <text x="120" y="246" fill="#E8D44D" font-size="13" font-weight="700" text-anchor="end">1-band</text>
+          <text x="120" y="265" fill="#8A90A0" font-size="11.5" text-anchor="end">q/2 − |d| ≤ R  →  bit 1</text>
+          <text x="430" y="452" fill="#565C6B" font-size="11" text-anchor="middle">the two bands sit at opposite poles — antipodal — so one bootstrap reads the bit as a sign</text>
+        </g>
+      </svg>
+      <p class="cap">What the node holds is the whole <b>noisy ring</b>. Only your secret key tells whether a coefficient fell into a <b style="color:#E8D44D">lemon band</b>. A message is yours only if <b>every</b> coefficient did.</p>
+    </div>
+
+    <!-- PIPELINE -->
+    <div class="rail">
+      <div class="step"><div class="num">01</div><div>
+        <h3>Clue</h3>
+        <p>Each message leaves a small public <em>clue</em> on-chain — the non-secret parts <code>(ct.a, ct.b)</code> of a BlackLemon ciphertext. Anyone can see it; it reveals nothing on its own.</p>
+        <span class="who">on-chain · public</span>
+      </div></div>
+
+      <div class="step"><div class="num">02</div><div>
+        <h3>Detection key</h3>
+        <p>You publish your key <em>encrypted</em>: <code>Enc(s)</code> and <code>Enc(sk.b)</code>. The node holds it but can't read it — it's just ciphertext.</p>
+        <span class="who">you → node</span>
+      </div></div>
+
+      <div class="step"><div class="num">03</div><div>
+        <h3>Oblivious detection</h3>
+        <p>For every clue, the node computes <code>Enc(d) = ct.a + ct.b·s + sk.b</code> homomorphically — the exact BlackLemon decryption, run entirely on encrypted data.</p>
+        <span class="who">node · sees ciphertext only</span>
+      </div></div>
+
+      <div class="step"><div class="num">04</div><div>
+        <h3>Bootstrap → pertinence bit</h3>
+        <p>A programmable bootstrap maps each coefficient of <code>d</code> by its band (see the ring above) into one encrypted verdict: <code>Enc(PV)</code>, the bit "this one is mine."</p>
+        <span class="who">node · still blind</span>
+      </div></div>
+
+      <div class="step"><div class="num">05</div><div>
+        <h3>Compaction</h3>
+        <p>The node multiplies each <code>Enc(PV)</code> by its payload and folds all <em>N</em> messages into just <code>O(k̄)</code> buckets — a digest whose size depends on how many are yours, not on how many exist.</p>
+        <span class="who">node · O(k̄) out</span>
+      </div></div>
+
+      <div class="step"><div class="num">06</div><div>
+        <h3>Recover</h3>
+        <p>You download the tiny digest and solve it locally with your key, recovering exactly your messages — having sent and received a constant trickle of data.</p>
+        <span class="who">you · decrypt</span>
+      </div></div>
+    </div>
+
+    <!-- BLINDNESS -->
+    <div class="blind">
+      <div class="ic">◑</div>
+      <p>Across the entire scan the node never learns <b>your key</b>, <b>which messages matched</b>, or <b>what any payload says</b>. Every step runs on ciphertext; the bands only ever open under your secret.</p>
+    </div>
+
+    <!-- GUARANTEES -->
+    <div class="guard">
+      <div class="cell"><div class="k">Bandwidth</div><div class="v"><span class="x">O(k̄)</span>, not O(N)<br><span style="color:var(--mut);font-weight:400;font-size:13px">digest scales with your mail, not the chain</span></div></div>
+      <div class="cell"><div class="k">Privacy</div><div class="v">Node stays <span class="x">blind</span><br><span style="color:var(--mut);font-weight:400;font-size:13px">computes on ciphertext, end to end</span></div></div>
+      <div class="cell"><div class="k">Hardness</div><div class="v"><span class="x">Post-quantum</span><br><span style="color:var(--mut);font-weight:400;font-size:13px">lattice RLWE / learning-with-errors</span></div></div>
+    </div>
+
+    <footer>
+      <div class="brand"><b>BLACKNET</b> · don't reveal, prove</div>
+      <div class="note">Mechanism explainer. The pipeline is implemented and verified against cleartext at functional parameters; production security parameters are a separate, documented step.</div>
+    </footer>
+
+  </div>
+</div>
+
+<script>
+  // Procedural "noise" field: dim points scattered near the ring (what the node sees),
+  // with a handful of bright lemon points sitting inside the two pertinence bands.
+  (function(){
+    var g=document.getElementById('noise'); if(!g) return;
+    var NS='http://www.w3.org/2000/svg', R=150, seed=20260620;
+    function rnd(){ seed=(seed*1103515245+12345)&0x7fffffff; return seed/0x7fffffff; }
+    function dot(x,y,r,fill,op){var c=document.createElementNS(NS,'circle');
+      c.setAttribute('cx',x.toFixed(1));c.setAttribute('cy',y.toFixed(1));c.setAttribute('r',r);
+      c.setAttribute('fill',fill);c.setAttribute('opacity',op);g.appendChild(c);}
+    // grey noise ring
+    for(var i=0;i<150;i++){
+      var a=rnd()*Math.PI*2, rr=R+(rnd()-0.5)*26;
+      dot(Math.cos(a)*rr, Math.sin(a)*rr, rnd()<.15?1.7:1.1, '#3A3F4C', (0.35+rnd()*0.4).toFixed(2));
+    }
+    // a few lemon points that happen to fall in the bands (angle ~0 and ~PI)
+    var bands=[0,Math.PI];
+    bands.forEach(function(base){
+      for(var j=0;j<5;j++){
+        var a=base+(rnd()-0.5)*0.30, rr=R+(rnd()-0.5)*10;
+        dot(Math.cos(a)*rr, Math.sin(a)*rr, 2.2, '#E8D44D', (0.7+rnd()*0.3).toFixed(2));
+      }
+    });
+  })();
+</script>
+</body>
+</html>

@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>The zkVM — Blacknet</title>
+<style>
+  :root{
+    --void:#060608; --panel:#0B0C11; --hair:#23262F; --hair-soft:#15171E;
+    --ink:#ECEEF2; --mut:#8A90A0; --dim:#565C6B;
+    --lemon:#E8D44D;
+    --proof:#74D6C4; --proof-soft:rgba(116,214,196,.12); --proof-line:rgba(116,214,196,.45);
+    --mono:ui-monospace,"JetBrains Mono","SFMono-Regular",Menlo,Consolas,monospace;
+    --sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  }
+  *{box-sizing:border-box}
+  html,body{margin:0;background:var(--void);color:var(--ink);font-family:var(--sans);
+    -webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility}
+  .stage{position:relative;min-height:100%;padding:64px 22px 40px;overflow:hidden}
+  .stage::before{content:"";position:absolute;inset:0;z-index:0;
+    background-image:radial-gradient(circle at center, rgba(255,255,255,.045) .8px, transparent .9px);
+    background-size:26px 26px;opacity:.5;
+    -webkit-mask-image:radial-gradient(120% 80% at 50% 18%, #000 35%, transparent 78%);
+            mask-image:radial-gradient(120% 80% at 50% 18%, #000 35%, transparent 78%);}
+  .stage::after{content:"";position:absolute;inset:0;z-index:0;pointer-events:none;
+    background:radial-gradient(60% 45% at 50% 8%, rgba(116,214,196,.06), transparent 60%),
+               radial-gradient(80% 60% at 50% 120%, #000 30%, transparent 70%);}
+  .poster{position:relative;z-index:1;max-width:860px;margin:0 auto}
+
+  .eyebrow{font-family:var(--mono);font-size:12px;letter-spacing:.34em;text-transform:uppercase;
+    color:var(--proof);display:flex;align-items:center;gap:12px}
+  .eyebrow b{color:var(--lemon);font-weight:600}
+  .eyebrow::after{content:"";height:1px;flex:1;background:linear-gradient(90deg,var(--proof-line),transparent)}
+  h1{font-family:var(--mono);font-weight:700;font-size:clamp(34px,7vw,58px);line-height:.98;
+    letter-spacing:-.02em;margin:20px 0 0}
+  h1 .lo{color:var(--mut);font-weight:500}
+  .thesis{font-size:clamp(17px,2.4vw,21px);line-height:1.5;margin:18px 0 0;max-width:60ch}
+  .thesis b{color:var(--proof);font-weight:600}
+  .sub{color:var(--mut);font-size:15px;line-height:1.55;margin:10px 0 0;max-width:64ch}
+
+  .hero{margin:38px 0 8px;border:1px solid var(--hair);border-radius:14px;background:
+    linear-gradient(180deg, rgba(255,255,255,.018), transparent 60%), var(--panel);
+    padding:14px 14px 6px;position:relative}
+  .hero .cap{font-family:var(--mono);font-size:11.5px;letter-spacing:.06em;color:var(--mut);
+    padding:8px 8px 12px;line-height:1.5}
+  .hero .cap b{color:var(--ink);font-weight:600}
+  svg{display:block;width:100%;height:auto}
+
+  .rail{margin:30px 0 0;border-top:1px solid var(--hair)}
+  .step{display:grid;grid-template-columns:54px 1fr;gap:18px;padding:20px 4px;
+    border-bottom:1px solid var(--hair-soft);align-items:start}
+  .num{font-family:var(--mono);font-size:13px;color:var(--proof);padding-top:3px;letter-spacing:.04em}
+  .step h3{font-family:var(--mono);font-size:15px;font-weight:600;margin:0;letter-spacing:.01em}
+  .step p{margin:7px 0 0;color:var(--mut);font-size:14.5px;line-height:1.55;max-width:62ch}
+  .step p code{font-family:var(--mono);font-size:12.5px;color:#C9CEDA;background:#13151C;
+    padding:1px 6px;border-radius:5px;border:1px solid var(--hair-soft)}
+
+  .guard{margin:30px 0 0;display:grid;grid-template-columns:1fr 1fr 1fr;gap:1px;
+    background:var(--hair);border:1px solid var(--hair);border-radius:12px;overflow:hidden}
+  .cell{background:var(--panel);padding:18px 16px}
+  .cell .k{font-family:var(--mono);font-size:10.5px;letter-spacing:.16em;text-transform:uppercase;color:var(--dim)}
+  .cell .v{font-size:16px;font-weight:600;margin:8px 0 0;line-height:1.35}
+  .cell .v .x{color:var(--proof)}
+  .cell .v small{color:var(--mut);font-weight:400;font-size:13px}
+
+  footer{margin:30px 0 0;border-top:1px solid var(--hair);padding-top:16px;display:flex;
+    flex-wrap:wrap;gap:8px 20px;justify-content:space-between;align-items:baseline}
+  footer .brand{font-family:var(--mono);font-size:12px;letter-spacing:.12em;color:var(--mut)}
+  footer .brand b{color:var(--lemon)}
+  footer .note{font-size:11.5px;color:var(--dim);max-width:50ch;line-height:1.5}
+  @media(max-width:560px){.guard{grid-template-columns:1fr}.step{grid-template-columns:40px 1fr;gap:12px}}
+</style>
+</head>
+<body>
+<div class="stage">
+  <div class="poster">
+
+    <div class="eyebrow"><b>Blacknet</b> · Verifiable Computation</div>
+    <h1>The <span class="lo">zkVM</span></h1>
+    <p class="thesis">Compute once, <b>verify everywhere.</b> Run a program off-chain, then hand anyone a tiny proof they ran it right.</p>
+    <p class="sub">Re-executing other people's computation is how chains stay honest — and why they're slow. The zkVM replaces re-execution with a single succinct proof: the work happens once, and the proof that checks it stays the same size no matter how big the work was.</p>
+
+    <!-- HERO: the fold -->
+    <div class="hero">
+      <svg viewBox="0 0 860 470" role="img" aria-label="Many execution steps fold into one accumulator, then into a single constant-size proof.">
+        <defs>
+          <radialGradient id="seal" cx="50%" cy="50%" r="50%">
+            <stop offset="0%" stop-color="rgba(116,214,196,.18)"/><stop offset="100%" stop-color="transparent"/>
+          </radialGradient>
+          <marker id="arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+            <path d="M0 0 L10 5 L0 10 z" fill="#74D6C4"/>
+          </marker>
+        </defs>
+
+        <text x="30" y="34" fill="#8A90A0" font-family="ui-monospace,monospace" font-size="12.5" letter-spacing="2">FOLD  EVERY  STEP  INTO  ONE  ·  THE  PROOF  NEVER  GROWS</text>
+
+        <!-- step trace, left -->
+        <g font-family="ui-monospace,monospace">
+          <text x="40" y="76" fill="#565C6B" font-size="11" letter-spacing="1.5">EXECUTION TRACE</text>
+        </g>
+        <g>
+          <!-- five visible step frames + an ellipsis frame -->
+          <g fill="#0E1016" stroke="#2B2F3A">
+            <rect x="40" y="92"  width="150" height="34" rx="6"/>
+            <rect x="40" y="134" width="150" height="34" rx="6"/>
+            <rect x="40" y="176" width="150" height="34" rx="6"/>
+            <rect x="40" y="218" width="150" height="34" rx="6"/>
+            <rect x="40" y="300" width="150" height="34" rx="6"/>
+          </g>
+          <g font-family="ui-monospace,monospace" font-size="12" fill="#9AA0AE">
+            <text x="56" y="114">step 1</text>
+            <text x="56" y="156">step 2</text>
+            <text x="56" y="198">step 3</text>
+            <text x="56" y="240">step 4</text>
+            <text x="56" y="322">step N</text>
+          </g>
+          <text x="115" y="278" text-anchor="middle" fill="#565C6B" font-family="ui-monospace,monospace" font-size="16">⋮</text>
+        </g>
+
+        <!-- fold converging arrows to accumulator -->
+        <g fill="none" stroke="#74D6C4" stroke-width="1.4" opacity=".85" marker-end="url(#arr)">
+          <path d="M198 109 C 300 109, 320 210, 408 218"/>
+          <path d="M198 151 C 300 151, 322 214, 408 222"/>
+          <path d="M198 193 C 300 193, 324 224, 408 230"/>
+          <path d="M198 235 C 300 235, 322 232, 408 236"/>
+          <path d="M198 317 C 320 317, 330 250, 408 244"/>
+        </g>
+        <text x="300" y="300" fill="#74D6C4" font-family="ui-monospace,monospace" font-size="11.5" letter-spacing="1">HyperNova fold (IVC)</text>
+
+        <!-- accumulator node -->
+        <g transform="translate(452,231)">
+          <circle r="44" fill="url(#seal)"/>
+          <circle r="30" fill="#0E1016" stroke="#74D6C4" stroke-width="1.6"/>
+          <text x="0" y="-2" text-anchor="middle" fill="#ECEEF2" font-family="ui-monospace,monospace" font-size="11" font-weight="700">one</text>
+          <text x="0" y="13" text-anchor="middle" fill="#9AA0AE" font-family="ui-monospace,monospace" font-size="10">accumulator</text>
+        </g>
+
+        <!-- arrow to proof seal -->
+        <line x1="500" y1="231" x2="600" y2="231" stroke="#74D6C4" stroke-width="1.4" marker-end="url(#arr)"/>
+
+        <!-- the constant-size proof seal -->
+        <g transform="translate(710,231)">
+          <polygon points="0,-66 57,-33 57,33 0,66 -57,33 -57,-33" fill="#0E1016" stroke="#E8D44D" stroke-width="1.6"/>
+          <polygon points="0,-66 57,-33 57,33 0,66 -57,33 -57,-33" fill="rgba(232,212,77,.06)"/>
+          <text x="0" y="-14" text-anchor="middle" fill="#8A90A0" font-family="ui-monospace,monospace" font-size="10" letter-spacing="1">PROOF</text>
+          <text x="0" y="12" text-anchor="middle" fill="#E8D44D" font-family="ui-monospace,monospace" font-size="22" font-weight="700">≈37</text>
+          <text x="0" y="30" text-anchor="middle" fill="#ECEEF2" font-family="ui-monospace,monospace" font-size="12">KB</text>
+          <text x="0" y="50" text-anchor="middle" fill="#565C6B" font-family="ui-monospace,monospace" font-size="9.5">constant</text>
+        </g>
+
+        <text x="430" y="452" text-anchor="middle" fill="#565C6B" font-family="ui-monospace,monospace" font-size="11">ten steps or ten billion — the proof, and the cost to check it, stay the same</text>
+      </svg>
+      <p class="cap">Each step is <b>folded</b> into a running accumulator instead of being proven on its own. At the end, one <b style="color:#74D6C4">succinct opening</b> — about 37&nbsp;KB — attests to the entire run.</p>
+    </div>
+
+    <!-- PIPELINE -->
+    <div class="rail">
+      <div class="step"><div class="num">01</div><div>
+        <h3>Execute</h3>
+        <p>Run the program on the virtual machine and record its trace — every register and memory step it took.</p>
+      </div></div>
+      <div class="step"><div class="num">02</div><div>
+        <h3>Arithmetize</h3>
+        <p>Turn the trace into <code>R1CS</code> constraints: a system of equations that holds if and only if the program executed honestly.</p>
+      </div></div>
+      <div class="step"><div class="num">03</div><div>
+        <h3>Commit</h3>
+        <p>Bind the witness with an <code>Ajtai / SIS</code> lattice commitment — short, hiding, and post-quantum hard to forge.</p>
+      </div></div>
+      <div class="step"><div class="num">04</div><div>
+        <h3>Fold</h3>
+        <p><code>HyperNova</code> folds each step into a single accumulator (IVC). The work compounds; the thing you carry forward does not grow.</p>
+      </div></div>
+      <div class="step"><div class="num">05</div><div>
+        <h3>Open</h3>
+        <p>Produce one succinct proof — about <code>37 KB</code>, constant in the number of steps — that opens the accumulator.</p>
+      </div></div>
+      <div class="step"><div class="num">06</div><div>
+        <h3>Verify on-chain</h3>
+        <p>Kernel transactions (<code>VerifiedComputation</code>, <code>DeployProgram</code>, <code>ComputeReference</code>) check the proof. Anyone verifies; no one re-runs.</p>
+      </div></div>
+    </div>
+
+    <!-- GUARANTEES -->
+    <div class="guard">
+      <div class="cell"><div class="k">Proof size</div><div class="v"><span class="x">~37 KB</span>, constant<br><small>independent of how long the program ran</small></div></div>
+      <div class="cell"><div class="k">Trust</div><div class="v">Math, <span class="x">not replay</span><br><small>verify the proof, skip the re-execution</small></div></div>
+      <div class="cell"><div class="k">Hardness</div><div class="v"><span class="x">Post-quantum</span><br><small>lattice commitments, no pairings</small></div></div>
+    </div>
+
+    <footer>
+      <div class="brand"><b>BLACKNET</b> · compute once, verify everywhere</div>
+      <div class="note">Mechanism explainer. The proof system — arithmetization, SIS commitment, folding, succinct opening, and on-chain codec — is implemented and tested.</div>
+    </footer>
+
+  </div>
+</div>
+</body>
+</html>

@@ -100,3 +100,78 @@ fn non_pertinent_only_board_compacts_to_zero() {
         );
     }
 }
+
+// --- path 2: payload limb codec verified through the real compaction ---------
+
+use blacknet_crypto::rns_compaction::{compact_buckets_bfv, join_limbs, split_limbs};
+
+#[test]
+fn limbed_payload_compaction_recovers_exactly() {
+    // A ~16-bit payload (values < 257^2 = 66049) carried as two base-257 limbs,
+    // so the compaction multiply could run in the low-noise t=257 ring. Here we
+    // verify the limb mechanism end to end through the existing compaction;
+    // correctness is modulus-independent and the t=257 noise win is measured.
+    let mut rng = drg(91);
+    let key = RnsRlwe::keygen(&mut rng);
+    let base = 257i64;
+    let n_limbs = 2usize;
+
+    const N_MSG: usize = 4;
+    let support = [0usize, 3];
+    let k = support.len();
+    let is_pert = |i: usize| support.contains(&i);
+
+    // payloads with coefficients in [0, base^2)
+    let payloads_pt: Vec<[i64; N]> = (0..N_MSG)
+        .map(|m| core::array::from_fn(|i| ((m as i64 + 1) * 9173 + i as i64 * 7) % (base * base)))
+        .collect();
+
+    // encrypted pertinence bits Enc(PV)
+    let pv: Vec<_> = (0..N_MSG)
+        .map(|i| {
+            let mut bit = [0i64; N];
+            bit[0] = i64::from(is_pert(i));
+            key.encrypt(&mut rng, &bit)
+        })
+        .collect();
+
+    let weights = vandermonde_weights(k, N_MSG);
+
+    // compact each limb independently, recover, then recombine
+    let mut recovered_limbs: Vec<Vec<[i64; N]>> = vec![Vec::new(); k];
+    for j in 0..n_limbs {
+        let limb_payloads: Vec<_> = payloads_pt
+            .iter()
+            .map(|p| {
+                let limb = split_limbs(p, base, n_limbs)[j];
+                key.encrypt(&mut rng, &limb)
+            })
+            .collect();
+        let buckets = compact_buckets_bfv(&limb_payloads, &pv, &weights);
+        let bucket_pt: Vec<[i64; N]> = buckets.iter().map(|b| key.decrypt2(b)).collect();
+        let recovered = recover_pertinent_payloads(&bucket_pt, &support, &weights);
+        for c in 0..k {
+            recovered_limbs[c].push(recovered[c]);
+        }
+    }
+
+    for (c, &i) in support.iter().enumerate() {
+        let rejoined = join_limbs(&recovered_limbs[c], base);
+        assert_eq!(
+            rejoined.to_vec(),
+            payloads_pt[i].to_vec(),
+            "limbed payload {i} recovered"
+        );
+    }
+}
+
+#[test]
+fn limb_codec_roundtrips() {
+    let base = 257i64;
+    let v: [i64; N] = core::array::from_fn(|i| (i as i64 * 131 + 17) % (base * base * base));
+    let limbs = split_limbs(&v, base, 3);
+    for limb in &limbs {
+        assert!(limb.iter().all(|&c| c >= 0 && c < base));
+    }
+    assert_eq!(join_limbs(&limbs, base).to_vec(), v.to_vec());
+}
