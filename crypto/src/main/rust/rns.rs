@@ -23,6 +23,7 @@
 //! exists over it) and the product is `≈ 2^88 > 2^77`.
 
 use crate::random::{Distribution, UniformGenerator, UniformIntDistribution};
+use alloc::vec::Vec;
 
 /// NTT-friendly RNS limb primes: each has `2048 | p − 1`; product ≈ 2^88.
 pub const RNS_PRIMES: [i64; 3] = [469762049, 754974721, 998244353];
@@ -155,9 +156,106 @@ fn negacyclic_root(p: i64) -> i64 {
 
 /// In-place iterative radix-2 NTT of length `NTT_DEGREE` with `root` a primitive
 /// `N`-th root of unity mod `p`.
-fn ntt_inplace(a: &mut [i64; NTT_DEGREE], root: i64, p: i64) {
+/// Negacyclic convolution `a * b mod (X^N + 1, p)` via NTT: ψ-weight, length-N
+/// cyclic NTT, pointwise product, inverse NTT, ψ-unweight.
+pub fn negacyclic_mul_mod(
+    a: &[i64; NTT_DEGREE],
+    b: &[i64; NTT_DEGREE],
+    p: i64,
+) -> [i64; NTT_DEGREE] {
+    with_ntt_plan(p, |plan| plan.negacyclic_mul(a, b))
+}
+
+/// Precomputed per-prime NTT data: roots, the ψ pre/post-scaling power tables,
+/// and the forward/inverse twiddle tables. Building this is the expensive part
+/// of an NTT multiply (a root search plus several modular inversions and the
+/// twiddle generation); it depends only on the prime, so it is computed once and
+/// reused across the many calls a single bootstrap makes (see `with_ntt_plan`).
+pub struct NttPlan {
+    p: i64,
+    psi_pows: Vec<i64>,     // ψ^i, i = 0..N
+    psi_inv_pows: Vec<i64>, // ψ^{-i}, i = 0..N (already folded with N^{-1})
+    fwd_tw: Vec<i64>,       // forward NTT twiddles (ω), flattened by stage, len N-1
+    inv_tw: Vec<i64>,       // inverse NTT twiddles (ω^{-1}), flattened by stage
+    n_inv: i64,
+}
+
+impl NttPlan {
+    #[must_use]
+    pub fn build(p: i64) -> Self {
+        let n = NTT_DEGREE;
+        let psi = negacyclic_root(p);
+        let psi_inv = inv_mod(psi, p);
+        let omega = mulmod(psi, psi, p);
+        let omega_inv = inv_mod(omega, p);
+        let n_inv = inv_mod(n as i64, p);
+
+        let mut psi_pows = Vec::with_capacity(n);
+        let mut psi_inv_pows = Vec::with_capacity(n);
+        let mut pp = 1i64;
+        let mut pip = 1i64;
+        for _ in 0..n {
+            psi_pows.push(pp);
+            psi_inv_pows.push(pip);
+            pp = mulmod(pp, psi, p);
+            pip = mulmod(pip, psi_inv, p);
+        }
+        NttPlan {
+            p,
+            psi_pows,
+            psi_inv_pows,
+            fwd_tw: build_twiddles(omega, p),
+            inv_tw: build_twiddles(omega_inv, p),
+            n_inv,
+        }
+    }
+
+    #[must_use]
+    pub fn negacyclic_mul(
+        &self,
+        a: &[i64; NTT_DEGREE],
+        b: &[i64; NTT_DEGREE],
+    ) -> [i64; NTT_DEGREE] {
+        let p = self.p;
+        let mut fa = [0i64; NTT_DEGREE];
+        let mut fb = [0i64; NTT_DEGREE];
+        for i in 0..NTT_DEGREE {
+            fa[i] = mulmod(a[i].rem_euclid(p), self.psi_pows[i], p);
+            fb[i] = mulmod(b[i].rem_euclid(p), self.psi_pows[i], p);
+        }
+        ntt_inplace_tw(&mut fa, &self.fwd_tw, p);
+        ntt_inplace_tw(&mut fb, &self.fwd_tw, p);
+        let mut fc: [i64; NTT_DEGREE] = core::array::from_fn(|k| mulmod(fa[k], fb[k], p));
+        ntt_inplace_tw(&mut fc, &self.inv_tw, p);
+        core::array::from_fn(|i| {
+            let scaled = mulmod(fc[i], self.n_inv, p);
+            mulmod(scaled, self.psi_inv_pows[i], p)
+        })
+    }
+}
+
+/// Flattened twiddle table for [`ntt_inplace_tw`]: for each stage `len = 2,4,…,N`
+/// the `len/2` powers `root^{(N/len)·j}`, concatenated. Mirrors the on-the-fly
+/// schedule of the original `ntt_inplace` exactly.
+fn build_twiddles(root: i64, p: i64) -> Vec<i64> {
     let n = NTT_DEGREE;
-    // bit-reversal permutation
+    let mut tw = Vec::with_capacity(n - 1);
+    let mut len = 2;
+    while len <= n {
+        let wlen = powmod(root, (n / len) as i64, p);
+        let mut w = 1i64;
+        for _ in 0..len / 2 {
+            tw.push(w);
+            w = mulmod(w, wlen, p);
+        }
+        len <<= 1;
+    }
+    tw
+}
+
+/// Cooley–Tukey NTT using a precomputed twiddle table (see [`build_twiddles`]).
+fn ntt_inplace_tw(a: &mut [i64; NTT_DEGREE], tw: &[i64], p: i64) {
+    let n = NTT_DEGREE;
     let bits = n.trailing_zeros();
     for i in 0..n {
         let j = (i as u32).reverse_bits() >> (32 - bits);
@@ -166,60 +264,55 @@ fn ntt_inplace(a: &mut [i64; NTT_DEGREE], root: i64, p: i64) {
             a.swap(i, j);
         }
     }
+    let mut idx = 0usize;
     let mut len = 2;
     while len <= n {
-        let wlen = powmod(root, (n / len) as i64, p);
+        let half = len / 2;
         let mut i = 0;
         while i < n {
-            let mut w = 1i64;
-            for j in 0..len / 2 {
+            for j in 0..half {
+                let w = tw[idx + j];
                 let u = a[i + j];
-                let v = mulmod(a[i + j + len / 2], w, p);
+                let v = mulmod(a[i + j + half], w, p);
                 a[i + j] = (u + v).rem_euclid(p);
-                a[i + j + len / 2] = (u - v).rem_euclid(p);
-                w = mulmod(w, wlen, p);
+                a[i + j + half] = (u - v).rem_euclid(p);
             }
             i += len;
         }
+        idx += half;
         len <<= 1;
     }
 }
 
-/// Negacyclic convolution `a * b mod (X^N + 1, p)` via NTT: ψ-weight, length-N
-/// cyclic NTT, pointwise product, inverse NTT, ψ-unweight.
-pub fn negacyclic_mul_mod(
-    a: &[i64; NTT_DEGREE],
-    b: &[i64; NTT_DEGREE],
-    p: i64,
-) -> [i64; NTT_DEGREE] {
-    let n = NTT_DEGREE;
-    let psi = negacyclic_root(p);
-    let psi_inv = inv_mod(psi, p);
-    let omega = mulmod(psi, psi, p); // N-th root
-    let omega_inv = inv_mod(omega, p);
-    let n_inv = inv_mod(n as i64, p);
+/// Run `f` with the [`NttPlan`] for prime `p`. With the `std` feature the plan is
+/// built once per prime and cached for the process (the prime set is small and
+/// fixed); without it the plan is built per call (still correct, and it shares
+/// the twiddle tables across the three NTTs of one multiply).
+#[cfg(feature = "std")]
+fn with_ntt_plan<R>(p: i64, f: impl FnOnce(&NttPlan) -> R) -> R {
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<alloc::collections::BTreeMap<i64, &'static NttPlan>>> =
+        OnceLock::new();
+    let cache = CACHE.get_or_init(|| Mutex::new(alloc::collections::BTreeMap::new()));
+    let plan: &'static NttPlan = {
+        let mut guard = cache.lock().expect("ntt plan cache poisoned");
+        if let Some(plan) = guard.get(&p) {
+            plan
+        } else {
+            // The prime set is small and fixed, so leaking a bounded number of
+            // plans for the process lifetime is intentional.
+            let leaked: &'static NttPlan =
+                alloc::boxed::Box::leak(alloc::boxed::Box::new(NttPlan::build(p)));
+            guard.insert(p, leaked);
+            leaked
+        }
+    };
+    f(plan)
+}
 
-    let mut fa = [0i64; NTT_DEGREE];
-    let mut fb = [0i64; NTT_DEGREE];
-    let mut psi_pow = 1i64;
-    for i in 0..n {
-        fa[i] = mulmod(a[i].rem_euclid(p), psi_pow, p);
-        fb[i] = mulmod(b[i].rem_euclid(p), psi_pow, p);
-        psi_pow = mulmod(psi_pow, psi, p);
-    }
-    ntt_inplace(&mut fa, omega, p);
-    ntt_inplace(&mut fb, omega, p);
-    let mut fc: [i64; NTT_DEGREE] = core::array::from_fn(|k| mulmod(fa[k], fb[k], p));
-    ntt_inplace(&mut fc, omega_inv, p);
-
-    let mut psi_inv_pow = 1i64;
-    let mut out = [0i64; NTT_DEGREE];
-    for i in 0..n {
-        let scaled = mulmod(fc[i], n_inv, p);
-        out[i] = mulmod(scaled, psi_inv_pow, p);
-        psi_inv_pow = mulmod(psi_inv_pow, psi_inv, p);
-    }
-    out
+#[cfg(not(feature = "std"))]
+fn with_ntt_plan<R>(p: i64, f: impl FnOnce(&NttPlan) -> R) -> R {
+    f(&NttPlan::build(p))
 }
 
 /// A degree-`NTT_DEGREE` polynomial in the RNS basis: one residue vector per
