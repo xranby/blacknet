@@ -489,3 +489,81 @@ fn bfv_fast_matches_reference_and_cleartext() {
         dt_ref.as_secs_f64() / dt_fast.as_secs_f64()
     );
 }
+
+// --- LWE->LWE key-switch (dimension reduction) and the full front-end chain --
+
+use blacknet_crypto::rns_rlwe::{lwe_keyswitch, modulus_switch_to_2n};
+
+#[test]
+#[ignore = "slow: dim-1024 key-switch keygen; run with --ignored"]
+fn lwe_keyswitch_preserves_message() {
+    let mut rng = drg(101);
+    let key = RnsRlwe::keygen(&mut rng);
+    const NB: usize = 16;
+    let bootstrap_key: [i64; NB] = core::array::from_fn(|i| (i % 2) as i64);
+    let ksk = key.lwe_keyswitch_keygen(&mut rng, &bootstrap_key);
+
+    // encrypt a message, sample-extract a few coefficients, key-switch, decrypt
+    // under the small bootstrap key.
+    let mut m = [0i64; 1024];
+    for (i, v) in m.iter_mut().enumerate() {
+        *v = ((i * 13 + 5) % 65537) as i64;
+    }
+    let ct = key.encrypt(&mut rng, &m);
+    for &idx in &[0usize, 1, 17, 500, 1023] {
+        let lwe = sample_extract(&ct, idx);
+        let switched = lwe_keyswitch(&ksk, &lwe);
+        let got = RnsRlwe::lwe_decrypt_under(&bootstrap_key, &switched);
+        assert_eq!(got, m[idx], "key-switched message at coeff {idx}");
+    }
+}
+
+#[test]
+#[ignore = "slow: dim-1024 key-switch keygen + blind rotation; run with --ignored"]
+fn front_end_chain_clue_to_pertinence_bit() {
+    use blacknet_crypto::rns_detect::{RnsDetectionKey, oblivious_detect};
+    use blacknet_crypto::rns_rlwe::{
+        bootstrap_keygen, encode_half_domain, half_domain_test_vector, programmable_bootstrap,
+    };
+
+    let mut rng = drg(102);
+    let key = RnsRlwe::keygen(&mut rng);
+    const NB: usize = 16;
+    let bootstrap_key: [i64; NB] = core::array::from_fn(|i| (i % 2) as i64);
+    let bsk = bootstrap_keygen(&mut rng, &key, &bootstrap_key);
+    let ksk = key.lwe_keyswitch_keygen(&mut rng, &bootstrap_key);
+
+    // A toy pertinence predicate over p=8 phase classes (the exact BlackLemon
+    // bands need finer rotation; this verifies the wiring end to end).
+    let p = 8usize;
+    let pertinent = [1i64, 0, 0, 1, 0, 1, 0, 0];
+    let tv = half_domain_test_vector(&pertinent, p);
+
+    // Build Enc(d) via the front end where d's first coefficient encodes a chosen
+    // class; the rest are arbitrary. We only bootstrap coefficient 0 here.
+    let class = 3usize; // pertinent
+    let s = [0i64; 1024];
+    let mut skb = [0i64; 1024];
+    let ca = [0i64; 1024];
+    let cb = [0i64; 1024];
+    // With s, cb, ca = 0 we have d = sk.b. Choose d[0] so the modulus-switched
+    // PBS phase (message * 2N/T) lands on the class slot encode_half_domain.
+    let phase_target = encode_half_domain(class, p) as i128; // in [0, N)
+    let two_n = 2 * 1024i128;
+    skb[0] = ((phase_target * 65537 + two_n / 2) / two_n) as i64;
+    let dk = RnsDetectionKey::generate(&key, &mut rng, &s, &skb);
+    let enc_d = oblivious_detect(&dk, &ca, &cb);
+
+    // chain: sample_extract -> key-switch -> modulus switch -> PBS
+    let lwe = sample_extract(&enc_d, 0);
+    let switched = lwe_keyswitch(&ksk, &lwe);
+    let lwe_a: Vec<i64> = switched
+        .a
+        .iter()
+        .map(|&x| modulus_switch_to_2n(x))
+        .collect();
+    let lwe_b = modulus_switch_to_2n(switched.b);
+    let out = programmable_bootstrap(&bsk, &tv, &lwe_a, lwe_b);
+    let pv = key.lwe_decrypt(&sample_extract(&out, 0));
+    assert_eq!(pv, pertinent[class], "clue -> Enc(d) -> KS -> PBS -> PV");
+}

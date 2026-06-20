@@ -774,3 +774,106 @@ pub fn bfv_mul_rns(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
         c2: g.rescale_poly(&t2),
     }
 }
+
+// ===========================================================================
+// LWE → LWE key-switch (dimension reduction) — bridges sample_extract(Enc(d))
+// (an LWE under the dim-N accumulator key) to a small dim-n bootstrap key, the
+// input the programmable bootstrap expects. Standard gadget key-switch in Z_P:
+// the gadget (GADGET_BITS·GADGET_DIGITS = 92 > log₂P) recomposes each source
+// mask coefficient exactly, so the only added noise is the key-switch key's.
+// ===========================================================================
+
+/// A key-switching key from a dim-`n_src` LWE key to a dim-`n_dst` LWE key:
+/// for each source coordinate and gadget digit, an LWE under the destination
+/// key encrypting `z_l · Bʲ`.
+pub struct LweKeySwitchKey {
+    ksk: Vec<RnsLwe>,
+    n_src: usize,
+    n_dst: usize,
+}
+
+fn lwe_encrypt_under<R: UniformGenerator<Output = u8>>(
+    small_key: &[i64],
+    value: i128,
+    rng: &mut R,
+) -> RnsLwe {
+    let p = RnsInt::product();
+    let mask = RnsPoly::uniform(rng);
+    let a: Vec<i128> = (0..small_key.len())
+        .map(|i| mask.balanced_coefficient(i))
+        .collect();
+    let noise = RnsPoly::small(rng, 8);
+    let e = noise.balanced_coefficient(0);
+    let mut inner: i128 = 0;
+    for (ai, &si) in a.iter().zip(small_key.iter()) {
+        inner = (inner + ai * i128::from(si)).rem_euclid(p);
+    }
+    let b = (value - inner + e).rem_euclid(p);
+    RnsLwe { a, b }
+}
+
+impl RnsRlwe {
+    /// Build a key-switch key from this accumulator key's coefficient vector
+    /// (the key that `sample_extract` produces LWEs under) to a small LWE
+    /// `bootstrap_key`.
+    pub fn lwe_keyswitch_keygen<R: UniformGenerator<Output = u8>>(
+        &self,
+        rng: &mut R,
+        bootstrap_key: &[i64],
+    ) -> LweKeySwitchKey {
+        let z: [i128; NTT_DEGREE] = core::array::from_fn(|l| self.s.balanced_coefficient(l));
+        let mut ksk = Vec::with_capacity(NTT_DEGREE * GADGET_DIGITS);
+        for &zl in z.iter() {
+            for j in 0..GADGET_DIGITS {
+                let value = zl * (1i128 << (GADGET_BITS * j as u32));
+                ksk.push(lwe_encrypt_under(bootstrap_key, value, rng));
+            }
+        }
+        LweKeySwitchKey {
+            ksk,
+            n_src: NTT_DEGREE,
+            n_dst: bootstrap_key.len(),
+        }
+    }
+
+    /// Decrypt an LWE under a raw `bootstrap_key` (the destination of a
+    /// key-switch): `round((b + ⟨a,key⟩)/Δ) mod t`.
+    #[must_use]
+    pub fn lwe_decrypt_under(bootstrap_key: &[i64], lwe: &RnsLwe) -> i64 {
+        let p = RnsInt::product();
+        let mut acc = lwe.b.rem_euclid(p);
+        for (al, &kl) in lwe.a.iter().zip(bootstrap_key.iter()) {
+            acc = (acc + al * i128::from(kl)).rem_euclid(p);
+        }
+        if acc > p / 2 {
+            acc -= p;
+        }
+        let scaled = ((acc as f64) / (delta() as f64)).round() as i128;
+        scaled.rem_euclid(i128::from(T)) as i64
+    }
+}
+
+/// Key-switch a dim-`n_src` LWE (under the accumulator key) to a dim-`n_dst` LWE
+/// (under the bootstrap key), preserving the phase.
+#[must_use]
+#[allow(clippy::needless_range_loop)]
+pub fn lwe_keyswitch(ksk: &LweKeySwitchKey, lwe: &RnsLwe) -> RnsLwe {
+    let p = RnsInt::product();
+    let mut a = alloc::vec![0i128; ksk.n_dst];
+    let mut b = lwe.b.rem_euclid(p);
+    for l in 0..ksk.n_src {
+        let digits = signed_scalar_digits(lwe.a[l]);
+        for j in 0..GADGET_DIGITS {
+            let d = i128::from(digits[j]);
+            if d == 0 {
+                continue;
+            }
+            let entry = &ksk.ksk[l * GADGET_DIGITS + j];
+            for i in 0..ksk.n_dst {
+                a[i] = (a[i] + d * entry.a[i]).rem_euclid(p);
+            }
+            b = (b + d * entry.b).rem_euclid(p);
+        }
+    }
+    RnsLwe { a, b }
+}
