@@ -456,3 +456,165 @@ pub fn packing_keyswitch(ksk: &PackingKeySwitchKey, lwe_a: &[i128], lwe_b: i128)
     }
     acc
 }
+
+// ===========================================================================
+// BFV ciphertext×ciphertext multiplication at the real P ≈ 2^88 RNS modulus.
+//
+// This is the oblivious-compaction connector (PV·payload) operating at the same
+// modulus as detection/bootstrap, so it integrates with the rest of the stack.
+// The tensor product of two ciphertexts has coefficients up to N·(P/2)² ≈ 2^184,
+// which exceeds i128, so the tensor and the BFV rescale round(D·t/P) are done in
+// `BigInt`. Division by P is performed as sequential division by its three NTT
+// primes (floor(floor(X/p₀)/p₁)/p₂ = floor(X/P)); the rescaled result fits i128.
+// For a single multiplication the product is kept as a degree-2 ciphertext
+// (decrypted with s²), so no relinearization is needed.
+// ===========================================================================
+
+use crate::bigint::BigInt;
+
+/// A degree-2 RLWE/BFV ciphertext `(c0, c1, c2)` with `c0 + c1·s + c2·s² = Δ·m + e`.
+#[derive(Clone)]
+pub struct RnsCt2 {
+    c0: RnsPoly,
+    c1: RnsPoly,
+    c2: RnsPoly,
+}
+
+fn b4_from_u128(x: u128) -> BigInt<4> {
+    let mut bytes = [0u8; 32];
+    bytes[..16].copy_from_slice(&x.to_le_bytes());
+    BigInt::<4>::from_le_bytes::<32>(bytes)
+}
+
+fn b16_from_u128(x: u128) -> BigInt<16> {
+    let mut bytes = [0u8; 128];
+    bytes[..16].copy_from_slice(&x.to_le_bytes());
+    BigInt::<16>::from_le_bytes::<128>(bytes)
+}
+
+fn b16_low_u128(x: BigInt<16>) -> u128 {
+    let bytes = x.to_le_bytes::<128>();
+    let mut lo = [0u8; 16];
+    lo.copy_from_slice(&bytes[..16]);
+    u128::from_le_bytes(lo)
+}
+
+/// Accumulate the negacyclic convolution `a * b` (signed, exact) into `acc`.
+#[allow(clippy::needless_range_loop)]
+fn conv_accumulate(
+    acc: &mut [BigInt<8>; NTT_DEGREE],
+    a: &[i128; NTT_DEGREE],
+    b: &[i128; NTT_DEGREE],
+) {
+    for i in 0..NTT_DEGREE {
+        if a[i] == 0 {
+            continue;
+        }
+        let ma = b4_from_u128(a[i].unsigned_abs());
+        let sa = a[i] < 0;
+        for j in 0..NTT_DEGREE {
+            if b[j] == 0 {
+                continue;
+            }
+            let mut k = i + j;
+            let mut neg = sa ^ (b[j] < 0);
+            if k >= NTT_DEGREE {
+                k -= NTT_DEGREE;
+                neg = !neg;
+            }
+            let prod = ma.widening_mul::<4, 8>(b4_from_u128(b[j].unsigned_abs()));
+            acc[k] = if neg { acc[k] - prod } else { acc[k] + prod };
+        }
+    }
+}
+
+/// BFV rescale of one tensor coefficient: `round(D · t / P) mod P`, returned in
+/// `[0, P)`. `D` is a signed 2's-complement `BigInt<8>` (|D| < 2^184).
+fn rescale_coeff(d: BigInt<8>) -> i128 {
+    let half = BigInt::<8>::from([0, 0, 0, 0, 0, 0, 0, 1u64 << 63]);
+    let neg = d >= half;
+    let mag = if neg { -d } else { d }; // |D|, < 2^184
+    // numerator = |D|·t + P/2  (< 2^201, fits BigInt<16>)
+    let p = RnsInt::product();
+    let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T as u64));
+    num += b16_from_u128((p / 2) as u128);
+    // floor(num / P) via sequential division by the three RNS primes
+    let mut q = num;
+    for &prime in &crate::rns::RNS_PRIMES {
+        q /= prime as u64;
+    }
+    let v = b16_low_u128(q) as i128; // |result| < 2^112 fits i128
+    let signed = if neg { -v } else { v };
+    signed.rem_euclid(p)
+}
+
+fn rescale_poly(acc: &[BigInt<8>; NTT_DEGREE]) -> RnsPoly {
+    let coeffs: [i128; NTT_DEGREE] = core::array::from_fn(|i| rescale_coeff(acc[i]));
+    RnsPoly::from_coefficients(&coeffs)
+}
+
+/// BFV ciphertext×ciphertext multiply at the 2^88 modulus. Returns a degree-2
+/// ciphertext encrypting `m₁·m₂` (the negacyclic product mod t).
+#[must_use]
+pub fn bfv_mul_rns(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
+    // phase = b + a·s, so (c0,c1) := (b,a).
+    let xb: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.b.balanced_coefficient(i));
+    let xa: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.a.balanced_coefficient(i));
+    let yb: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.b.balanced_coefficient(i));
+    let ya: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.a.balanced_coefficient(i));
+
+    let mut t0 = [BigInt::<8>::ZERO; NTT_DEGREE];
+    let mut t1 = [BigInt::<8>::ZERO; NTT_DEGREE];
+    let mut t2 = [BigInt::<8>::ZERO; NTT_DEGREE];
+    conv_accumulate(&mut t0, &xb, &yb); // c0·c0'
+    conv_accumulate(&mut t1, &xb, &ya); // c0·c1'
+    conv_accumulate(&mut t1, &xa, &yb); // + c1·c0'
+    conv_accumulate(&mut t2, &xa, &ya); // c1·c1'
+
+    RnsCt2 {
+        c0: rescale_poly(&t0),
+        c1: rescale_poly(&t1),
+        c2: rescale_poly(&t2),
+    }
+}
+
+impl RnsRlwe {
+    /// Decrypt a degree-2 (product) ciphertext: `round((c0 + c1·s + c2·s²)/Δ)`.
+    #[must_use]
+    pub fn decrypt2(&self, ct: &RnsCt2) -> [i64; NTT_DEGREE] {
+        let s2 = self.s.negacyclic_mul(&self.s);
+        let phase = ct
+            .c0
+            .add(&ct.c1.negacyclic_mul(&self.s))
+            .add(&ct.c2.negacyclic_mul(&s2));
+        let d = delta();
+        core::array::from_fn(|i| {
+            let c = phase.balanced_coefficient(i);
+            let q = ((c as f64) / (d as f64)).round() as i64;
+            q.rem_euclid(T)
+        })
+    }
+}
+
+impl RnsCt2 {
+    /// Multiply a degree-2 ciphertext by a cleartext scalar weight.
+    #[must_use]
+    pub fn scalar_mul(&self, w: i128) -> RnsCt2 {
+        let k = RnsPoly::constant(w);
+        RnsCt2 {
+            c0: self.c0.negacyclic_mul(&k),
+            c1: self.c1.negacyclic_mul(&k),
+            c2: self.c2.negacyclic_mul(&k),
+        }
+    }
+
+    /// Coefficient-wise sum of two degree-2 ciphertexts.
+    #[must_use]
+    pub fn add(&self, other: &RnsCt2) -> RnsCt2 {
+        RnsCt2 {
+            c0: self.c0.add(&other.c0),
+            c1: self.c1.add(&other.c1),
+            c2: self.c2.add(&other.c2),
+        }
+    }
+}

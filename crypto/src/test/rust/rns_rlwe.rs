@@ -1,3 +1,4 @@
+#![allow(clippy::missing_const_for_fn)]
 /*
  * Copyright (c) 2026 Blacknet contributors
  *
@@ -318,6 +319,183 @@ fn packing_keyswitch_lands_message_in_constant_coefficient() {
         assert_eq!(
             recovered[0], m,
             "packed message in constant coefficient for m={m}"
+        );
+    }
+}
+
+// --- BFV ct*ct multiply at the real 2^88 modulus (bigint tensor) -------------
+
+use blacknet_crypto::rns_rlwe::bfv_mul_rns;
+
+#[test]
+fn bfv_multiply_at_2pow88_matches_cleartext() {
+    let mut rng = drg(71);
+    let key = RnsRlwe::keygen(&mut rng);
+    // small operands so the negacyclic product stays within t for the check
+    let mut a = [0i64; 1024];
+    let mut b = [0i64; 1024];
+    for i in 0..3 {
+        a[i] = (i as i64) + 2;
+        b[i] = (3 * i as i64) + 1;
+    }
+    let ca = key.encrypt(&mut rng, &a);
+    let cb = key.encrypt(&mut rng, &b);
+    let prod = key.decrypt2(&bfv_mul_rns(&ca, &cb));
+
+    let t = 65537i64;
+    let mut expect = [0i64; 1024];
+    for i in 0..1024 {
+        for j in 0..1024 {
+            let mut k = i + j;
+            let mut p = a[i] * b[j];
+            if k >= 1024 {
+                k -= 1024;
+                p = -p;
+            }
+            expect[k] = (expect[k] + p).rem_euclid(t);
+        }
+    }
+    for i in 0..1024 {
+        assert_eq!(prod[i], expect[i], "2^88 BFV product at coeff {i}");
+    }
+}
+
+#[test]
+fn bfv_oblivious_select_at_2pow88() {
+    // Enc(1)*Enc(payload) = payload; Enc(0)*Enc(payload) = 0, at the real modulus.
+    let mut rng = drg(72);
+    let key = RnsRlwe::keygen(&mut rng);
+    let mut payload = [0i64; 1024];
+    for (i, v) in payload.iter_mut().enumerate() {
+        *v = ((i * 37 + 11) % 65537) as i64;
+    }
+    let cp = key.encrypt(&mut rng, &payload);
+    let mut one = [0i64; 1024];
+    one[0] = 1;
+    let c1 = key.encrypt(&mut rng, &one);
+    let c0 = key.encrypt(&mut rng, &[0i64; 1024]);
+
+    let sel1 = key.decrypt2(&bfv_mul_rns(&c1, &cp));
+    let sel0 = key.decrypt2(&bfv_mul_rns(&c0, &cp));
+    assert_eq!(
+        sel1.to_vec(),
+        payload.to_vec(),
+        "PV=1 selects full payload at 2^88"
+    );
+    assert!(sel0.iter().all(|&v| v == 0), "PV=0 masks to zero at 2^88");
+}
+
+use blacknet_crypto::rns_rlwe::RnsCt2;
+
+fn inv_mod_t(a: i64) -> i64 {
+    let t = 65537i64;
+    let (mut r, mut b, mut e) = (1i64, a.rem_euclid(t), t - 2);
+    while e > 0 {
+        if e & 1 == 1 {
+            r = (r * b).rem_euclid(t);
+        }
+        b = (b * b).rem_euclid(t);
+        e >>= 1;
+    }
+    r
+}
+
+#[test]
+#[ignore = "slow: bigint BFV mult over degree-1024 at 2^88; run with --ignored"]
+fn oblivious_bandwidth_lite_compaction_at_2pow88() {
+    let mut rng = drg(73);
+    let key = RnsRlwe::keygen(&mut rng);
+    let t = 65537i64;
+
+    const N_MSG: usize = 4;
+    let support = [1usize, 2];
+    let k = support.len();
+    let mk = |seed: i64| -> [i64; 1024] {
+        core::array::from_fn(|i| ((seed * 101 + i as i64 * 7) % t).rem_euclid(t))
+    };
+    let payloads_pt: Vec<[i64; 1024]> = (0..N_MSG).map(|i| mk(i as i64 + 1)).collect();
+    let is_pert = |i: usize| support.contains(&i);
+
+    // Encrypt payloads AND the pertinence bits -> the node never sees either.
+    let payloads: Vec<_> = payloads_pt
+        .iter()
+        .map(|m| key.encrypt(&mut rng, m))
+        .collect();
+    let pv: Vec<_> = (0..N_MSG)
+        .map(|i| {
+            let mut bit = [0i64; 1024];
+            bit[0] = i64::from(is_pert(i));
+            key.encrypt(&mut rng, &bit)
+        })
+        .collect();
+
+    // k Vandermonde rows.
+    let weights: Vec<Vec<i64>> = (0..k)
+        .map(|j| {
+            let base = (j as i64 + 1) % t;
+            let mut row = Vec::new();
+            let mut p = 1i64;
+            for _ in 0..N_MSG {
+                row.push(p);
+                p = (p * base).rem_euclid(t);
+            }
+            row
+        })
+        .collect();
+
+    // bucket_j = Σ_i PV_i · w_ji · payload_i  (all homomorphic, PV encrypted)
+    let buckets: Vec<RnsCt2> = (0..k)
+        .map(|j| {
+            let mut acc: Option<RnsCt2> = None;
+            for i in 0..N_MSG {
+                let term = bfv_mul_rns(&pv[i], &payloads[i]).scalar_mul(i128::from(weights[j][i]));
+                acc = Some(match acc {
+                    Some(a) => a.add(&term),
+                    None => term,
+                });
+            }
+            acc.unwrap()
+        })
+        .collect();
+    assert_eq!(buckets.len(), k);
+
+    let bucket_pt: Vec<[i64; 1024]> = buckets.iter().map(|b| key.decrypt2(b)).collect();
+
+    // invert the k×k support submatrix mod t, recover the pertinent payloads
+    let mut m: Vec<Vec<i64>> = (0..k)
+        .map(|j| support.iter().map(|&i| weights[j][i] % t).collect())
+        .collect();
+    let mut inv: Vec<Vec<i64>> = (0..k)
+        .map(|i| (0..k).map(|j| i64::from(i == j)).collect())
+        .collect();
+    for col in 0..k {
+        let pinv = inv_mod_t(m[col][col]);
+        for j in 0..k {
+            m[col][j] = (m[col][j] * pinv).rem_euclid(t);
+            inv[col][j] = (inv[col][j] * pinv).rem_euclid(t);
+        }
+        for r in 0..k {
+            if r != col {
+                let f = m[r][col];
+                for j in 0..k {
+                    m[r][j] = (m[r][j] - f * m[col][j]).rem_euclid(t);
+                    inv[r][j] = (inv[r][j] - f * inv[col][j]).rem_euclid(t);
+                }
+            }
+        }
+    }
+    for (c, &i) in support.iter().enumerate() {
+        let recovered: Vec<i64> = (0..1024)
+            .map(|pos| {
+                (0..k).fold(0i64, |acc, j| {
+                    (acc + inv[c][j] * bucket_pt[j][pos]).rem_euclid(t)
+                })
+            })
+            .collect();
+        assert_eq!(
+            recovered,
+            payloads_pt[i].to_vec(),
+            "recovered full payload {i} at 2^88"
         );
     }
 }
