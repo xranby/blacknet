@@ -8,8 +8,8 @@
  */
 
 //! Leveled RLWE over the NTT-friendly RNS accumulator ring ([`RnsPoly`],
-//! modulus `P ≈ 2^88`) — the substrate the bandwidth-lite OMR detector needs
-//! and that the LM ring (`Q ≈ 2^60`) could not support.
+//! modulus `P ≈ 2^60`) — the substrate the bandwidth-lite OMR detector needs
+//! and that the BlackLemon ring (q = 65537) could not support on its own.
 //!
 //! The completion analysis showed every homomorphic step past the linear
 //! decryption overflows `Q ≈ 2^60`: the range-check fold reaches `~2^70`, and
@@ -493,7 +493,7 @@ pub fn packing_keyswitch(ksk: &PackingKeySwitchKey, lwe_a: &[i128], lwe_b: i128)
 }
 
 // ===========================================================================
-// BFV ciphertext×ciphertext multiplication at the real P ≈ 2^88 RNS modulus.
+// BFV ciphertext×ciphertext multiplication at the real P ≈ 2^60 RNS modulus.
 //
 // This is the oblivious-compaction connector (PV·payload) operating at the same
 // modulus as detection/bootstrap, so it integrates with the rest of the stack.
@@ -536,11 +536,7 @@ fn b16_low_u128(x: BigInt<16>) -> u128 {
 
 /// Accumulate the negacyclic convolution `a * b` (signed, exact) into `acc`.
 #[allow(clippy::needless_range_loop)]
-fn conv_accumulate(
-    acc: &mut [BigInt<8>; NTT_DEGREE],
-    a: &[i128; NTT_DEGREE],
-    b: &[i128; NTT_DEGREE],
-) {
+fn conv_accumulate(acc: &mut [BigInt<8>], a: &[i128], b: &[i128]) {
     for i in 0..NTT_DEGREE {
         if a[i] == 0 {
             continue;
@@ -583,9 +579,9 @@ fn rescale_coeff(d: BigInt<8>) -> i128 {
     signed.rem_euclid(p)
 }
 
-fn rescale_poly(acc: &[BigInt<8>; NTT_DEGREE]) -> RnsPoly {
-    let coeffs: [i128; NTT_DEGREE] = core::array::from_fn(|i| rescale_coeff(acc[i]));
-    RnsPoly::from_coefficients(&coeffs)
+fn rescale_poly(acc: &[BigInt<8>]) -> RnsPoly {
+    let coeffs: Vec<i128> = (0..NTT_DEGREE).map(|i| rescale_coeff(acc[i])).collect();
+    RnsPoly::from_coefficients(coeffs.as_slice().try_into().unwrap())
 }
 
 /// Reference BFV multiply: exact O(N²) bigint convolution. Kept as the
@@ -593,14 +589,22 @@ fn rescale_poly(acc: &[BigInt<8>; NTT_DEGREE]) -> RnsPoly {
 #[must_use]
 pub fn bfv_mul_rns_ref(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
     // phase = b + a·s, so (c0,c1) := (b,a).
-    let xb: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.b.balanced_coefficient(i));
-    let xa: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.a.balanced_coefficient(i));
-    let yb: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.b.balanced_coefficient(i));
-    let ya: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.a.balanced_coefficient(i));
+    let xb: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| x.b.balanced_coefficient(i))
+        .collect();
+    let xa: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| x.a.balanced_coefficient(i))
+        .collect();
+    let yb: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| y.b.balanced_coefficient(i))
+        .collect();
+    let ya: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| y.a.balanced_coefficient(i))
+        .collect();
 
-    let mut t0 = [BigInt::<8>::ZERO; NTT_DEGREE];
-    let mut t1 = [BigInt::<8>::ZERO; NTT_DEGREE];
-    let mut t2 = [BigInt::<8>::ZERO; NTT_DEGREE];
+    let mut t0 = alloc::vec![BigInt::<8>::ZERO; NTT_DEGREE];
+    let mut t1 = alloc::vec![BigInt::<8>::ZERO; NTT_DEGREE];
+    let mut t2 = alloc::vec![BigInt::<8>::ZERO; NTT_DEGREE];
     conv_accumulate(&mut t0, &xb, &yb); // c0·c0'
     conv_accumulate(&mut t1, &xb, &ya); // c0·c1'
     conv_accumulate(&mut t1, &xa, &yb); // + c1·c0'
@@ -668,7 +672,7 @@ impl RnsCt2 {
 
 /// Four extra NTT-friendly primes (≡ 1 mod 2N) extending the base RNS basis so
 /// the seven-prime product exceeds the tensor range.
-const EXT_EXTRA_PRIMES: [i64; 4] = [1073692673, 1073668097, 1073655809, 1073651713];
+const EXT_EXTRA_PRIMES: [i64; 4] = [1073692673, 1073668097, 1073651713, 1073643521];
 
 #[inline]
 const fn ext_primes() -> [i64; 7] {
@@ -698,7 +702,7 @@ fn b8_mul_add(d: BigInt<8>, m: u64, a: u64) -> BigInt<8> {
 
 /// Negacyclic convolution residues of two balanced coefficient vectors, one row
 /// per extended prime.
-fn conv_residues(a: &[i128; NTT_DEGREE], b: &[i128; NTT_DEGREE]) -> Vec<[i64; NTT_DEGREE]> {
+fn conv_residues(a: &[i128], b: &[i128]) -> Vec<[i64; NTT_DEGREE]> {
     let primes = ext_primes();
     (0..7)
         .map(|pi| {
@@ -790,19 +794,27 @@ impl GarnerCtx {
     }
 
     fn rescale_poly(&self, residues: &[[i64; NTT_DEGREE]]) -> RnsPoly {
-        let coeffs: [i128; NTT_DEGREE] = core::array::from_fn(|i| self.rescale(residues, i));
-        RnsPoly::from_coefficients(&coeffs)
+        let coeffs: Vec<i128> = (0..NTT_DEGREE).map(|i| self.rescale(residues, i)).collect();
+        RnsPoly::from_coefficients(coeffs.as_slice().try_into().unwrap())
     }
 }
 
-/// Fast BFV ciphertext×ciphertext multiply at the 2^88 modulus (extended-basis
+/// Fast BFV ciphertext×ciphertext multiply at the 2^60 modulus (extended-basis
 /// NTT tensor). Returns a degree-2 ciphertext encrypting `m₁·m₂`.
 #[must_use]
 pub fn bfv_mul_rns(x: &RnsCt, y: &RnsCt) -> RnsCt2 {
-    let xb: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.b.balanced_coefficient(i));
-    let xa: [i128; NTT_DEGREE] = core::array::from_fn(|i| x.a.balanced_coefficient(i));
-    let yb: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.b.balanced_coefficient(i));
-    let ya: [i128; NTT_DEGREE] = core::array::from_fn(|i| y.a.balanced_coefficient(i));
+    let xb: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| x.b.balanced_coefficient(i))
+        .collect();
+    let xa: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| x.a.balanced_coefficient(i))
+        .collect();
+    let yb: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| y.b.balanced_coefficient(i))
+        .collect();
+    let ya: Vec<i128> = (0..NTT_DEGREE)
+        .map(|i| y.a.balanced_coefficient(i))
+        .collect();
 
     let t0 = conv_residues(&xb, &yb); // c0·c0'
     let t1 = add_residues(&conv_residues(&xb, &ya), &conv_residues(&xa, &yb)); // c0·c1'+c1·c0'
@@ -862,7 +874,9 @@ impl RnsRlwe {
         rng: &mut R,
         bootstrap_key: &[i64],
     ) -> LweKeySwitchKey {
-        let z: [i128; NTT_DEGREE] = core::array::from_fn(|l| self.s.balanced_coefficient(l));
+        let z: Vec<i128> = (0..NTT_DEGREE)
+            .map(|l| self.s.balanced_coefficient(l))
+            .collect();
         let mut ksk = Vec::with_capacity(NTT_DEGREE * GADGET_DIGITS);
         for &zl in z.iter() {
             for j in 0..GADGET_DIGITS {

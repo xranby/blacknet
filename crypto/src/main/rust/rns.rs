@@ -19,14 +19,18 @@
 //! (residues + CRT); the per-limb NTT fields and twiddle tables (rat4's
 //! `rings.sage` territory) are the companion build that fuses with it.
 //!
-//! Each prime here satisfies `2048 | p − 1` (so a length-2048 negacyclic NTT
-//! exists over it) and the product is `≈ 2^88 > 2^77`.
+//! Each prime here satisfies `8192 | p − 1` (so a length-8192 negacyclic NTT
+//! exists over it, i.e. a degree-4096 negacyclic ring) and the product is
+//! `P ≈ 2^60` — a *secure* message-ring modulus at N=4096 (fpylll core-SVP
+//! oracle: β=778 → 2^227 classical / 2^206 quantum, ≥128-bit with margin).
 
 use crate::random::{Distribution, UniformGenerator, UniformIntDistribution};
+use alloc::boxed::Box;
 use alloc::vec::Vec;
 
-/// NTT-friendly RNS limb primes: each has `2048 | p − 1`; product ≈ 2^88.
-pub const RNS_PRIMES: [i64; 3] = [65537, 249857, 188417];
+/// NTT-friendly RNS limb primes: each has `8192 | p − 1` (length-8192 NTT,
+/// degree-4096 ring); product P ≈ 2^60, a 128-bit-secure modulus at N=4096.
+pub const RNS_PRIMES: [i64; 3] = [65537, 4169729, 4120577];
 
 /// An integer represented by its residues modulo each [`RNS_PRIMES`] limb.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -118,7 +122,7 @@ impl RnsInt {
 // This is the arithmetic core of the redesigned bootstrap accumulator: degree-N
 // negacyclic multiplication (the dominant cost of blind rotation) done in
 // O(N log N) per limb via the number-theoretic transform, then recombined by
-// the CRT to give a product modulo P ≈ 2^88 — large enough for the
+// the CRT to give a product modulo P ≈ 2^60 — large enough for the
 // circuit-bootstrap fold's soundness AND fast, the single change the
 // completion analysis calls for.
 //
@@ -128,13 +132,13 @@ impl RnsInt {
 // ψ^N = −1 (a genuine negacyclic root) rather than assuming a generator.
 
 /// Accumulator ring degree (negacyclic, X^N + 1).
-pub const NTT_DEGREE: usize = 2048;
+pub const NTT_DEGREE: usize = 4096;
 
 /// Gadget base exponent and digit count for the external product:
-/// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^52 > P (~2^51.5)`. GADGET_BITS is kept
-/// as small as exactness allows (4*13=52) to minimise external-product / blind-
+/// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^60 ≥ P (~2^60)`. GADGET_BITS is kept
+/// as small as exactness allows (4*15=60) to minimise external-product / blind-
 /// rotation noise, which is what lets the secure-dimension bootstrap decode.
-pub const GADGET_BITS: u32 = 13;
+pub const GADGET_BITS: u32 = 15;
 pub const GADGET_DIGITS: usize = 4;
 
 #[inline]
@@ -321,7 +325,7 @@ fn with_ntt_plan<R>(p: i64, f: impl FnOnce(&NttPlan) -> R) -> R {
 /// limb. The accumulator's element type.
 #[derive(Clone)]
 pub struct RnsPoly {
-    limbs: [[i64; NTT_DEGREE]; 3],
+    limbs: Box<[[i64; NTT_DEGREE]; 3]>,
 }
 
 impl RnsPoly {
@@ -329,10 +333,10 @@ impl RnsPoly {
     #[must_use]
     pub fn from_coefficients(coeffs: &[i128; NTT_DEGREE]) -> Self {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = i128::from(RNS_PRIMES[l]);
                 core::array::from_fn(|i| coeffs[i].rem_euclid(p) as i64)
-            }),
+            })),
         }
     }
 
@@ -340,9 +344,9 @@ impl RnsPoly {
     #[must_use]
     pub fn negacyclic_mul(&self, other: &RnsPoly) -> RnsPoly {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 negacyclic_mul_mod(&self.limbs[l], &other.limbs[l], RNS_PRIMES[l])
-            }),
+            })),
         }
     }
 
@@ -363,9 +367,9 @@ impl RnsPoly {
 
     /// The zero polynomial.
     #[must_use]
-    pub const fn zero() -> Self {
+    pub fn zero() -> Self {
         RnsPoly {
-            limbs: [[0; NTT_DEGREE]; 3],
+            limbs: Box::new([[0; NTT_DEGREE]; 3]),
         }
     }
 
@@ -373,10 +377,10 @@ impl RnsPoly {
     #[must_use]
     pub fn add(&self, other: &RnsPoly) -> RnsPoly {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = RNS_PRIMES[l];
                 core::array::from_fn(|i| (self.limbs[l][i] + other.limbs[l][i]).rem_euclid(p))
-            }),
+            })),
         }
     }
 
@@ -384,10 +388,10 @@ impl RnsPoly {
     #[must_use]
     pub fn sub(&self, other: &RnsPoly) -> RnsPoly {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = RNS_PRIMES[l];
                 core::array::from_fn(|i| (self.limbs[l][i] - other.limbs[l][i]).rem_euclid(p))
-            }),
+            })),
         }
     }
 
@@ -395,10 +399,10 @@ impl RnsPoly {
     /// from `[0, p)` per limb (a uniform element of the RNS ring).
     pub fn uniform<R: UniformGenerator<Output = u8>>(rng: &mut R) -> Self {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let mut uid = UniformIntDistribution::<i64, R>::new(0..RNS_PRIMES[l]);
                 core::array::from_fn(|_| uid.sample(rng))
-            }),
+            })),
         }
     }
 
@@ -408,10 +412,10 @@ impl RnsPoly {
         let mut sid = UniformIntDistribution::<i64, R>::new(-bound..=bound);
         let coeffs: [i64; NTT_DEGREE] = core::array::from_fn(|_| sid.sample(rng));
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = RNS_PRIMES[l];
                 core::array::from_fn(|i| coeffs[i].rem_euclid(p))
-            }),
+            })),
         }
     }
 
@@ -419,10 +423,10 @@ impl RnsPoly {
     #[must_use]
     pub fn scale_plaintext(m: &[i64; NTT_DEGREE], delta: i128) -> Self {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = i128::from(RNS_PRIMES[l]);
                 core::array::from_fn(|i| (delta * i128::from(m[i])).rem_euclid(p) as i64)
-            }),
+            })),
         }
     }
 
@@ -430,10 +434,10 @@ impl RnsPoly {
     #[must_use]
     pub fn from_balanced(coeffs: &[i64; NTT_DEGREE]) -> Self {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = RNS_PRIMES[l];
                 core::array::from_fn(|i| coeffs[i].rem_euclid(p))
-            }),
+            })),
         }
     }
 
@@ -441,12 +445,12 @@ impl RnsPoly {
     #[must_use]
     pub fn constant(value: i128) -> Self {
         RnsPoly {
-            limbs: core::array::from_fn(|l| {
+            limbs: Box::new(core::array::from_fn(|l| {
                 let p = i128::from(RNS_PRIMES[l]);
                 let mut row = [0i64; NTT_DEGREE];
                 row[0] = value.rem_euclid(p) as i64;
                 row
-            }),
+            })),
         }
     }
 

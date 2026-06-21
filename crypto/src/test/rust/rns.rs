@@ -17,8 +17,12 @@ use blacknet_crypto::rns_rlwe::T;
 #[test]
 fn primes_are_ntt_friendly_and_large_enough() {
     // Each limb supports a length-2N negacyclic NTT (2N | p-1) at the chosen
-    // degree, and the product is a *secure* modulus at N=2048 (HE standard:
-    // log q <= 54). T = 65537 is one of the primes, so T | P exactly: this makes
+    // degree, and the product is a *secure* modulus at N=4096. Per the
+    // fpylll-backed core-SVP oracle (blacknet_lattice_oracle.sage), a ternary
+    // ring at N=4096 stays >=128-bit classical for log q up to ~88
+    // (beta=462 -> 2^135); we use P ~ 2^60 -> beta=778 -> 2^227 classical /
+    // 2^206 quantum, with a large correctness margin to spare. T = 65537 is one
+    // of the primes, so T | P exactly: this makes
     // the detection plain-multiply decode exact regardless of product magnitude
     // (the P-mod-T correction term vanishes), which is what lets the secure,
     // small modulus work where it otherwise could not.
@@ -41,8 +45,8 @@ fn primes_are_ntt_friendly_and_large_enough() {
         "P must give detection/compaction headroom"
     );
     assert!(
-        product < (1i128 << 54),
-        "P must stay <= 2^54 to be secure at N=2048"
+        product < (1i128 << 88),
+        "P must stay <= ~2^88 to be >=128-bit at N=4096 (fpylll core-SVP)"
     );
 }
 
@@ -170,7 +174,7 @@ fn measure_ntt_rns_speedup() {
     core::hint::black_box(acc.coefficient(0));
     let per = t0.elapsed().as_secs_f64() / reps as f64;
     println!(
-        "MEASURED NTT-RNS negacyclic mul (deg {N}, modulus ~2^88): {:.3} ms",
+        "MEASURED NTT-RNS negacyclic mul (deg {N}, modulus ~2^60): {:.3} ms",
         per * 1000.0
     );
 }
