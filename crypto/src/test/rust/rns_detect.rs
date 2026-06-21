@@ -14,7 +14,7 @@ use blacknet_crypto::random::FastDRG;
 use blacknet_crypto::rns_detect::{RnsDetectionKey, oblivious_detect};
 use blacknet_crypto::rns_rlwe::RnsRlwe;
 
-const N: usize = 1024;
+const N: usize = 2048;
 const Q: i64 = 65537;
 
 fn drg(b: u8) -> FastDRG {

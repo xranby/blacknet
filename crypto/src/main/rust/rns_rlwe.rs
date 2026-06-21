@@ -40,6 +40,17 @@ pub fn delta() -> i128 {
     RnsInt::product() / i128::from(T)
 }
 
+/// Compaction-ring plaintext modulus. The BFV multiply noise scales with the
+/// plaintext modulus; carrying payloads as base-`T_CMP` limbs keeps it low enough
+/// for the secure modulus (see rns_compaction limb codec). Detection uses `T`.
+pub const T_CMP: i64 = 257;
+
+/// `Δ` for the compaction ring.
+#[must_use]
+pub fn delta_cmp() -> i128 {
+    RnsInt::product() / i128::from(T_CMP)
+}
+
 /// A leveled-RLWE secret key over the RNS ring: a ternary polynomial.
 pub struct RnsRlwe {
     s: RnsPoly,
@@ -71,6 +82,20 @@ impl RnsRlwe {
         let e = RnsPoly::small(rng, 8);
         let scaled = RnsPoly::scale_plaintext(m, delta());
         // b = Δ·m + e − a·s, so that b + a·s = Δ·m + e.
+        let b = scaled.add(&e).sub(&a.negacyclic_mul(&self.s));
+        RnsCt { a, b }
+    }
+
+    /// Encrypt into the COMPACTION ring (scale `Δ_cmp = P/T_CMP`). Values must be
+    /// `< T_CMP`; carry larger payloads as base-`T_CMP` limbs.
+    pub fn encrypt_cmp<R: UniformGenerator<Output = u8>>(
+        &self,
+        rng: &mut R,
+        m: &[i64; NTT_DEGREE],
+    ) -> RnsCt {
+        let a = RnsPoly::uniform(rng);
+        let e = RnsPoly::small(rng, 8);
+        let scaled = RnsPoly::scale_plaintext(m, delta_cmp());
         let b = scaled.add(&e).sub(&a.negacyclic_mul(&self.s));
         RnsCt { a, b }
     }
@@ -536,7 +561,7 @@ fn rescale_coeff(d: BigInt<8>) -> i128 {
     let mag = if neg { -d } else { d }; // |D|, < 2^184
     // numerator = |D|·t + P/2  (< 2^201, fits BigInt<16>)
     let p = RnsInt::product();
-    let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T as u64));
+    let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T_CMP as u64));
     num += b16_from_u128((p / 2) as u128);
     // floor(num / P) via sequential division by the three RNS primes
     let mut q = num;
@@ -587,11 +612,11 @@ impl RnsRlwe {
             .c0
             .add(&ct.c1.negacyclic_mul(&self.s))
             .add(&ct.c2.negacyclic_mul(&s2));
-        let d = delta();
+        let d = delta_cmp();
         core::array::from_fn(|i| {
             let c = phase.balanced_coefficient(i);
             let q = ((c as f64) / (d as f64)).round() as i64;
-            q.rem_euclid(T)
+            q.rem_euclid(T_CMP)
         })
     }
 }
@@ -633,7 +658,7 @@ impl RnsCt2 {
 
 /// Four extra NTT-friendly primes (≡ 1 mod 2N) extending the base RNS basis so
 /// the seven-prime product exceeds the tensor range.
-const EXT_EXTRA_PRIMES: [i64; 4] = [1073692673, 1073668097, 1073651713, 1073643521];
+const EXT_EXTRA_PRIMES: [i64; 4] = [1073692673, 1073668097, 1073655809, 1073651713];
 
 #[inline]
 const fn ext_primes() -> [i64; 7] {
@@ -743,7 +768,7 @@ impl GarnerCtx {
         let mag = if neg { self.q_ext - d } else { d };
         // round(mag·t + P/2) / P  with P = base-3 product (sequential Div<u64>)
         let p = RnsInt::product();
-        let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T as u64));
+        let mut num = mag.widening_mul::<8, 16>(BigInt::<8>::from(T_CMP as u64));
         num += b16_from_u128((p / 2) as u128);
         let mut q = num;
         for &prime in &RNS_PRIMES {

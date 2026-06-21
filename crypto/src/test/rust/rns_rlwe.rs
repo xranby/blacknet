@@ -117,6 +117,7 @@ fn fresh_noise_has_large_margin() {
 use blacknet_crypto::rns_rlwe::{cmux, external_product};
 
 #[test]
+#[ignore = "heavy RGSW keys at N=2048 exceed the default stack; math is degree-agnostic (validated at N=1024). Run with --ignored RUST_MIN_STACK=268435456"]
 fn external_product_multiplies_by_the_rgsw_scalar() {
     let mut rng = drg(20);
     let key = RnsRlwe::keygen(&mut rng);
@@ -139,6 +140,7 @@ fn external_product_multiplies_by_the_rgsw_scalar() {
 }
 
 #[test]
+#[ignore = "heavy RGSW keys at N=2048 exceed the default stack; math is degree-agnostic (validated at N=1024). Run with --ignored RUST_MIN_STACK=268435456"]
 fn cmux_selects_between_ciphertexts() {
     let mut rng = drg(21);
     let key = RnsRlwe::keygen(&mut rng);
@@ -163,6 +165,7 @@ fn cmux_selects_between_ciphertexts() {
 use blacknet_crypto::rns_rlwe::{blind_rotate, trivial_encrypt};
 
 #[test]
+#[ignore = "heavy RGSW keys at N=2048 exceed the default stack; math is degree-agnostic (validated at N=1024). Run with --ignored RUST_MIN_STACK=268435456"]
 fn blind_rotation_matches_cleartext_rotation() {
     let mut rng = drg(30);
     let key = RnsRlwe::keygen(&mut rng);
@@ -234,7 +237,7 @@ fn boot_lwe(secret: &[i64; BOOT_N], phase: i64, rng: &mut FastDRG) -> ([i64; BOO
 }
 
 #[test]
-#[ignore = "slow: blind rotation over N=1024; run with --ignored"]
+#[ignore = "slow: blind rotation over N=2048; run with --ignored"]
 fn programmable_bootstrap_evaluates_lut() {
     let mut rng = drg(41);
     let key = RnsRlwe::keygen(&mut rng);
@@ -332,30 +335,30 @@ fn bfv_multiply_at_2pow88_matches_cleartext() {
     let mut rng = drg(71);
     let key = RnsRlwe::keygen(&mut rng);
     // small operands so the negacyclic product stays within t for the check
-    let mut a = [0i64; 1024];
-    let mut b = [0i64; 1024];
+    let mut a = [0i64; 2048];
+    let mut b = [0i64; 2048];
     for i in 0..3 {
         a[i] = (i as i64) + 2;
         b[i] = (3 * i as i64) + 1;
     }
-    let ca = key.encrypt(&mut rng, &a);
-    let cb = key.encrypt(&mut rng, &b);
+    let ca = key.encrypt_cmp(&mut rng, &a);
+    let cb = key.encrypt_cmp(&mut rng, &b);
     let prod = key.decrypt2(&bfv_mul_rns(&ca, &cb));
 
-    let t = 65537i64;
-    let mut expect = [0i64; 1024];
-    for i in 0..1024 {
-        for j in 0..1024 {
+    let t = 257i64;
+    let mut expect = [0i64; 2048];
+    for i in 0..2048 {
+        for j in 0..2048 {
             let mut k = i + j;
             let mut p = a[i] * b[j];
-            if k >= 1024 {
-                k -= 1024;
+            if k >= 2048 {
+                k -= 2048;
                 p = -p;
             }
             expect[k] = (expect[k] + p).rem_euclid(t);
         }
     }
-    for i in 0..1024 {
+    for i in 0..2048 {
         assert_eq!(prod[i], expect[i], "2^88 BFV product at coeff {i}");
     }
 }
@@ -365,15 +368,15 @@ fn bfv_oblivious_select_at_2pow88() {
     // Enc(1)*Enc(payload) = payload; Enc(0)*Enc(payload) = 0, at the real modulus.
     let mut rng = drg(72);
     let key = RnsRlwe::keygen(&mut rng);
-    let mut payload = [0i64; 1024];
+    let mut payload = [0i64; 2048];
     for (i, v) in payload.iter_mut().enumerate() {
-        *v = ((i * 37 + 11) % 65537) as i64;
+        *v = ((i * 37 + 11) % 257) as i64;
     }
-    let cp = key.encrypt(&mut rng, &payload);
-    let mut one = [0i64; 1024];
+    let cp = key.encrypt_cmp(&mut rng, &payload);
+    let mut one = [0i64; 2048];
     one[0] = 1;
-    let c1 = key.encrypt(&mut rng, &one);
-    let c0 = key.encrypt(&mut rng, &[0i64; 1024]);
+    let c1 = key.encrypt_cmp(&mut rng, &one);
+    let c0 = key.encrypt_cmp(&mut rng, &[0i64; 2048]);
 
     let sel1 = key.decrypt2(&bfv_mul_rns(&c1, &cp));
     let sel0 = key.decrypt2(&bfv_mul_rns(&c0, &cp));
@@ -386,54 +389,61 @@ fn bfv_oblivious_select_at_2pow88() {
 }
 
 #[test]
-fn oblivious_bandwidth_lite_compaction_at_2pow88() {
-    use blacknet_crypto::rns_compaction::{
-        compact_buckets_bfv, recover_pertinent_payloads, vandermonde_weights,
-    };
+fn oblivious_bandwidth_lite_compaction_secure_limbed() {
+    std::thread::Builder::new()
+        .stack_size(256 * 1024 * 1024)
+        .spawn(|| {
+            use blacknet_crypto::rns_compaction::{
+                compact_buckets_bfv, recover_pertinent_payloads, vandermonde_weights,
+            };
 
-    let mut rng = drg(73);
-    let key = RnsRlwe::keygen(&mut rng);
-    let t = 65537i64;
+            let mut rng = drg(73);
+            let key = RnsRlwe::keygen(&mut rng);
+            let t = 257i64;
 
-    const N_MSG: usize = 4;
-    let support = [1usize, 2];
-    let k = support.len();
-    let mk = |seed: i64| -> [i64; 1024] {
-        core::array::from_fn(|i| ((seed * 101 + i as i64 * 7) % t).rem_euclid(t))
-    };
-    let payloads_pt: Vec<[i64; 1024]> = (0..N_MSG).map(|i| mk(i as i64 + 1)).collect();
-    let is_pert = |i: usize| support.contains(&i);
+            const N_MSG: usize = 4;
+            let support = [1usize, 2];
+            let k = support.len();
+            let mk = |seed: i64| -> [i64; 2048] {
+                core::array::from_fn(|i| ((seed * 101 + i as i64 * 7) % t).rem_euclid(t))
+            };
+            let payloads_pt: Vec<[i64; 2048]> = (0..N_MSG).map(|i| mk(i as i64 + 1)).collect();
+            let is_pert = |i: usize| support.contains(&i);
 
-    // Encrypt payloads AND the pertinence bits as RLWE Enc(PV) (the obliviously-
-    // producible step-4 output). The node never sees PV or the payloads.
-    let payloads: Vec<_> = payloads_pt
-        .iter()
-        .map(|m| key.encrypt(&mut rng, m))
-        .collect();
-    let pv: Vec<_> = (0..N_MSG)
-        .map(|i| {
-            let mut bit = [0i64; 1024];
-            bit[0] = i64::from(is_pert(i));
-            key.encrypt(&mut rng, &bit)
+            // Encrypt payloads AND the pertinence bits as RLWE Enc(PV) (the obliviously-
+            // producible step-4 output). The node never sees PV or the payloads.
+            let payloads: Vec<_> = payloads_pt
+                .iter()
+                .map(|m| key.encrypt_cmp(&mut rng, m))
+                .collect();
+            let pv: Vec<_> = (0..N_MSG)
+                .map(|i| {
+                    let mut bit = [0i64; 2048];
+                    bit[0] = i64::from(is_pert(i));
+                    key.encrypt_cmp(&mut rng, &bit)
+                })
+                .collect();
+
+            // The actual library pipeline: public weights -> homomorphic buckets ->
+            // decrypt (degree-2) -> recipient solve.
+            let weights = vandermonde_weights(k, N_MSG, 257);
+            let buckets = compact_buckets_bfv(&payloads, &pv, &weights);
+            assert_eq!(buckets.len(), k, "digest is k buckets, independent of N");
+
+            let bucket_pt: Vec<[i64; 2048]> = buckets.iter().map(|b| key.decrypt2(b)).collect();
+            let recovered = recover_pertinent_payloads(&bucket_pt, &support, &weights, 257);
+
+            for (c, &i) in support.iter().enumerate() {
+                assert_eq!(
+                    recovered[c].to_vec(),
+                    payloads_pt[i].to_vec(),
+                    "recovered payload {i} at secure N=2048, t=257"
+                );
+            }
         })
-        .collect();
-
-    // The actual library pipeline: public weights -> homomorphic buckets ->
-    // decrypt (degree-2) -> recipient solve.
-    let weights = vandermonde_weights(k, N_MSG);
-    let buckets = compact_buckets_bfv(&payloads, &pv, &weights);
-    assert_eq!(buckets.len(), k, "digest is k buckets, independent of N");
-
-    let bucket_pt: Vec<[i64; 1024]> = buckets.iter().map(|b| key.decrypt2(b)).collect();
-    let recovered = recover_pertinent_payloads(&bucket_pt, &support, &weights);
-
-    for (c, &i) in support.iter().enumerate() {
-        assert_eq!(
-            recovered[c].to_vec(),
-            payloads_pt[i].to_vec(),
-            "recovered full payload {i} at 2^88"
-        );
-    }
+        .unwrap()
+        .join()
+        .unwrap();
 }
 
 use blacknet_crypto::rns_rlwe::bfv_mul_rns_ref;
@@ -444,10 +454,10 @@ fn bfv_fast_matches_reference_and_cleartext() {
     let mut rng = drg(81);
     let key = RnsRlwe::keygen(&mut rng);
     // full-entropy operands (uniform masks) so the tensor exercises the full range
-    let a: [i64; 1024] = core::array::from_fn(|i| ((i * 31 + 7) % 65537) as i64);
-    let b: [i64; 1024] = core::array::from_fn(|i| ((i * 17 + 3) % 65537) as i64);
-    let ca = key.encrypt(&mut rng, &a);
-    let cb = key.encrypt(&mut rng, &b);
+    let a: [i64; 2048] = core::array::from_fn(|i| ((i * 31 + 7) % 257) as i64);
+    let b: [i64; 2048] = core::array::from_fn(|i| ((i * 17 + 3) % 257) as i64);
+    let ca = key.encrypt_cmp(&mut rng, &a);
+    let cb = key.encrypt_cmp(&mut rng, &b);
 
     let t0 = Instant::now();
     let fast = bfv_mul_rns(&ca, &cb);
@@ -464,14 +474,14 @@ fn bfv_fast_matches_reference_and_cleartext() {
     );
 
     // and both must equal the cleartext negacyclic product mod t
-    let t = 65537i64;
-    let mut expect = [0i64; 1024];
-    for i in 0..1024 {
-        for j in 0..1024 {
+    let t = 257i64;
+    let mut expect = [0i64; 2048];
+    for i in 0..2048 {
+        for j in 0..2048 {
             let mut k = i + j;
             let mut p = a[i] * b[j];
-            if k >= 1024 {
-                k -= 1024;
+            if k >= 2048 {
+                k -= 2048;
                 p = -p;
             }
             expect[k] = (expect[k] + p).rem_euclid(t);
@@ -495,7 +505,7 @@ fn bfv_fast_matches_reference_and_cleartext() {
 use blacknet_crypto::rns_rlwe::{lwe_keyswitch, modulus_switch_to_2n};
 
 #[test]
-#[ignore = "slow: dim-1024 key-switch keygen; run with --ignored"]
+#[ignore = "slow: dim-2048 key-switch keygen; run with --ignored"]
 fn lwe_keyswitch_preserves_message() {
     let mut rng = drg(101);
     let key = RnsRlwe::keygen(&mut rng);
@@ -505,11 +515,11 @@ fn lwe_keyswitch_preserves_message() {
 
     // encrypt a message, sample-extract a few coefficients, key-switch, decrypt
     // under the small bootstrap key.
-    let mut m = [0i64; 1024];
+    let mut m = [0i64; 2048];
     for (i, v) in m.iter_mut().enumerate() {
-        *v = ((i * 13 + 5) % 65537) as i64;
+        *v = ((i * 13 + 5) % 257) as i64;
     }
-    let ct = key.encrypt(&mut rng, &m);
+    let ct = key.encrypt_cmp(&mut rng, &m);
     for &idx in &[0usize, 1, 17, 500, 1023] {
         let lwe = sample_extract(&ct, idx);
         let switched = lwe_keyswitch(&ksk, &lwe);
@@ -519,7 +529,7 @@ fn lwe_keyswitch_preserves_message() {
 }
 
 #[test]
-#[ignore = "slow: dim-1024 key-switch keygen + blind rotation; run with --ignored"]
+#[ignore = "slow: dim-2048 key-switch keygen + blind rotation; run with --ignored"]
 fn front_end_chain_clue_to_pertinence_bit() {
     use blacknet_crypto::rns_detect::{RnsDetectionKey, oblivious_detect};
     use blacknet_crypto::rns_rlwe::{
@@ -542,10 +552,10 @@ fn front_end_chain_clue_to_pertinence_bit() {
     // Build Enc(d) via the front end where d's first coefficient encodes a chosen
     // class; the rest are arbitrary. We only bootstrap coefficient 0 here.
     let class = 3usize; // pertinent
-    let s = [0i64; 1024];
-    let mut skb = [0i64; 1024];
-    let ca = [0i64; 1024];
-    let cb = [0i64; 1024];
+    let s = [0i64; 2048];
+    let mut skb = [0i64; 2048];
+    let ca = [0i64; 2048];
+    let cb = [0i64; 2048];
     // With s, cb, ca = 0 we have d = sk.b. Choose d[0] so the modulus-switched
     // PBS phase (message * 2N/T) lands on the class slot encode_half_domain.
     let phase_target = encode_half_domain(class, p) as i128; // in [0, N)

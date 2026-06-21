@@ -11,18 +11,39 @@
 
 #![allow(clippy::needless_range_loop)]
 
-use blacknet_crypto::rns::{RNS_PRIMES, RnsInt};
+use blacknet_crypto::rns::{NTT_DEGREE, RNS_PRIMES, RnsInt};
+use blacknet_crypto::rns_rlwe::T;
 
 #[test]
 fn primes_are_ntt_friendly_and_large_enough() {
-    // Each limb supports a length-2048 negacyclic NTT (2048 | p-1), and the
-    // product exceeds the 2^77 the circuit-bootstrap fold's soundness needs.
+    // Each limb supports a length-2N negacyclic NTT (2N | p-1) at the chosen
+    // degree, and the product is a *secure* modulus at N=2048 (HE standard:
+    // log q <= 54). T = 65537 is one of the primes, so T | P exactly: this makes
+    // the detection plain-multiply decode exact regardless of product magnitude
+    // (the P-mod-T correction term vanishes), which is what lets the secure,
+    // small modulus work where it otherwise could not.
     for &p in &RNS_PRIMES {
-        assert_eq!((p - 1) % 2048, 0, "prime {p} must satisfy 2048 | p-1");
+        assert_eq!(
+            (p - 1) % (2 * NTT_DEGREE as i64),
+            0,
+            "prime {p} must satisfy 2N | p-1 for the length-{} negacyclic NTT",
+            2 * NTT_DEGREE
+        );
     }
     let product = RnsInt::product();
-    assert!(product > (1i128 << 77), "CRT product must exceed 2^77");
-    assert!(product < (1i128 << 90), "product ~2^88 as expected");
+    assert_eq!(
+        product % i128::from(T),
+        0,
+        "T must divide P (exact detection)"
+    );
+    assert!(
+        product > (1i128 << 48),
+        "P must give detection/compaction headroom"
+    );
+    assert!(
+        product < (1i128 << 54),
+        "P must stay <= 2^54 to be secure at N=2048"
+    );
 }
 
 #[test]
@@ -74,7 +95,7 @@ fn sub_wraps_correctly() {
 
 // --- NTT-accelerated negacyclic RNS multiply vs schoolbook ------------------
 
-use blacknet_crypto::rns::{NTT_DEGREE, RnsPoly};
+use blacknet_crypto::rns::RnsPoly;
 
 const N: usize = NTT_DEGREE;
 

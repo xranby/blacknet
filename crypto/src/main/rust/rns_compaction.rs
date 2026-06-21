@@ -36,21 +36,21 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 use crate::rns::{NTT_DEGREE, RnsPoly};
-use crate::rns_rlwe::{RnsCt, RnsCt2, RnsRgsw, T, bfv_mul_rns, external_product};
+use crate::rns_rlwe::{RnsCt, RnsCt2, RnsRgsw, bfv_mul_rns, external_product};
 
 /// A public Vandermonde weight matrix: `W[j][i] = (j+1)^i mod t`. Any `k̄`
 /// distinct columns are linearly independent over `Z_t`, so the recipient can
 /// always solve for up to `m` pertinent payloads.
 #[must_use]
-pub fn vandermonde_weights(buckets: usize, messages: usize) -> Vec<Vec<i64>> {
+pub fn vandermonde_weights(buckets: usize, messages: usize, modulus: i64) -> Vec<Vec<i64>> {
     (0..buckets)
         .map(|j| {
-            let base = (j as i64 + 1).rem_euclid(T);
+            let base = (j as i64 + 1).rem_euclid(modulus);
             let mut row = Vec::with_capacity(messages);
             let mut p = 1i64;
             for _ in 0..messages {
                 row.push(p);
-                p = (p * base).rem_euclid(T);
+                p = (p * base).rem_euclid(modulus);
             }
             row
         })
@@ -107,32 +107,15 @@ pub fn compact_buckets_bfv(payloads: &[RnsCt], pv: &[RnsCt], weights: &[Vec<i64>
 
 // ---- recipient-side recovery: solve the small linear system mod t ----------
 
-const fn inv_mod_t(a: i64) -> i64 {
-    // t prime -> Fermat inverse
-    let mut r = 1i64;
-    let mut base = a.rem_euclid(T);
-    let mut e = T - 2;
-    while e > 0 {
-        if e & 1 == 1 {
-            r = (r * base).rem_euclid(T);
-        }
-        base = (base * base).rem_euclid(T);
-        e >>= 1;
-    }
-    r
-}
-
-/// Invert a `k × k` matrix modulo `t` (Gauss–Jordan). Returns `None` if
-/// singular.
-fn invert_mod_t(mut m: Vec<Vec<i64>>) -> Option<Vec<Vec<i64>>> {
+/// Invert a `k × k` matrix modulo prime `t` (Gauss–Jordan). `None` if singular.
+fn invert_mod(mut m: Vec<Vec<i64>>, t: i64) -> Option<Vec<Vec<i64>>> {
     let k = m.len();
     let mut inv: Vec<Vec<i64>> = (0..k)
         .map(|i| (0..k).map(|j| i64::from(i == j)).collect())
         .collect();
     for col in 0..k {
-        // find pivot
         let mut piv = col;
-        while piv < k && m[piv][col].rem_euclid(T) == 0 {
+        while piv < k && m[piv][col].rem_euclid(t) == 0 {
             piv += 1;
         }
         if piv == k {
@@ -140,18 +123,18 @@ fn invert_mod_t(mut m: Vec<Vec<i64>>) -> Option<Vec<Vec<i64>>> {
         }
         m.swap(col, piv);
         inv.swap(col, piv);
-        let pinv = inv_mod_t(m[col][col]);
+        let pinv = crate::rns::inv_mod(m[col][col], t);
         for j in 0..k {
-            m[col][j] = (m[col][j] * pinv).rem_euclid(T);
-            inv[col][j] = (inv[col][j] * pinv).rem_euclid(T);
+            m[col][j] = (m[col][j] * pinv).rem_euclid(t);
+            inv[col][j] = (inv[col][j] * pinv).rem_euclid(t);
         }
         for r in 0..k {
             if r != col {
-                let f = m[r][col].rem_euclid(T);
+                let f = m[r][col].rem_euclid(t);
                 if f != 0 {
                     for j in 0..k {
-                        m[r][j] = (m[r][j] - f * m[col][j]).rem_euclid(T);
-                        inv[r][j] = (inv[r][j] - f * inv[col][j]).rem_euclid(T);
+                        m[r][j] = (m[r][j] - f * m[col][j]).rem_euclid(t);
+                        inv[r][j] = (inv[r][j] - f * inv[col][j]).rem_euclid(t);
                     }
                 }
             }
@@ -168,24 +151,25 @@ pub fn recover_pertinent_payloads(
     buckets: &[[i64; NTT_DEGREE]],
     support: &[usize],
     weights: &[Vec<i64>],
+    modulus: i64,
 ) -> Vec<[i64; NTT_DEGREE]> {
     let k = support.len();
     let sub: Vec<Vec<i64>> = (0..k)
         .map(|j| {
             support
                 .iter()
-                .map(|&i| weights[j][i].rem_euclid(T))
+                .map(|&i| weights[j][i].rem_euclid(modulus))
                 .collect()
         })
         .collect();
-    let inv = invert_mod_t(sub).expect("support columns must be independent");
+    let inv = invert_mod(sub, modulus).expect("support columns must be independent");
 
     let mut out = alloc::vec![[0i64; NTT_DEGREE]; k];
     for pos in 0..NTT_DEGREE {
         for (c, slot) in out.iter_mut().enumerate() {
             let mut acc = 0i64;
             for j in 0..k {
-                acc = (acc + inv[c][j] * buckets[j][pos]).rem_euclid(T);
+                acc = (acc + inv[c][j] * buckets[j][pos]).rem_euclid(modulus);
             }
             slot[pos] = acc;
         }

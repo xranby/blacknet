@@ -26,7 +26,7 @@ use crate::random::{Distribution, UniformGenerator, UniformIntDistribution};
 use alloc::vec::Vec;
 
 /// NTT-friendly RNS limb primes: each has `2048 | p − 1`; product ≈ 2^88.
-pub const RNS_PRIMES: [i64; 3] = [469762049, 754974721, 998244353];
+pub const RNS_PRIMES: [i64; 3] = [65537, 249857, 188417];
 
 /// An integer represented by its residues modulo each [`RNS_PRIMES`] limb.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,7 +128,7 @@ impl RnsInt {
 // ψ^N = −1 (a genuine negacyclic root) rather than assuming a generator.
 
 /// Accumulator ring degree (negacyclic, X^N + 1).
-pub const NTT_DEGREE: usize = 1024;
+pub const NTT_DEGREE: usize = 2048;
 
 /// Gadget base exponent and digit count for the external product:
 /// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^92 > P`.
