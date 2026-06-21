@@ -131,8 +131,10 @@ impl RnsInt {
 pub const NTT_DEGREE: usize = 2048;
 
 /// Gadget base exponent and digit count for the external product:
-/// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^92 > P`.
-pub const GADGET_BITS: u32 = 23;
+/// `B = 2^GADGET_BITS`, `B^GADGET_DIGITS = 2^52 > P (~2^51.5)`. GADGET_BITS is kept
+/// as small as exactness allows (4*13=52) to minimise external-product / blind-
+/// rotation noise, which is what lets the secure-dimension bootstrap decode.
+pub const GADGET_BITS: u32 = 13;
 pub const GADGET_DIGITS: usize = 4;
 
 #[inline]

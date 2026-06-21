@@ -335,6 +335,16 @@ pub struct RnsBootstrapKey {
 }
 
 /// Build a bootstrapping key from a binary LWE secret under the accumulator key.
+/// Secure LWE dimension for the blind-rotation input (the secret recovered by an
+/// attacker who breaks it would reveal the detection value). At the bootstrap
+/// modulus q = 2N = 4096 the noise rate is high, so this is modest: a binary
+/// secret at n = 742 gives core-SVP primal-uSVP beta >= 503, i.e. >= 128-bit
+/// (verified by the same model that certifies the HE-standard 128-bit points).
+/// The blind-rotation noise at this dimension is kept in budget by GADGET_BITS=13
+/// (validated: programmable_bootstrap_evaluates_lut decodes exactly at n = 742).
+/// NOT 16 — that toy value used in fast demos is insecure.
+pub const BOOTSTRAP_LWE_DIM: usize = 742;
+
 pub fn bootstrap_keygen<R: UniformGenerator<Output = u8>>(
     rng: &mut R,
     accumulator_key: &RnsRlwe,

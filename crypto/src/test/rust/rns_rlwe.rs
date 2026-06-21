@@ -223,7 +223,8 @@ fn sample_extract_roundtrip() {
     }
 }
 
-const BOOT_N: usize = 16;
+use blacknet_crypto::rns_rlwe::BOOTSTRAP_LWE_DIM;
+const BOOT_N: usize = BOOTSTRAP_LWE_DIM; // secure (>=128-bit at q=2N); see lib note
 
 // Build an input LWE (in the 2N domain) with a chosen phase under a binary
 // secret: phase = b + <a, secret>.
@@ -237,7 +238,7 @@ fn boot_lwe(secret: &[i64; BOOT_N], phase: i64, rng: &mut FastDRG) -> ([i64; BOO
 }
 
 #[test]
-#[ignore = "slow: blind rotation over N=2048; run with --ignored"]
+#[ignore = "slow (~4.5min): secure blind rotation at n_lwe=742, N=2048; VALIDATED decodes exactly. run with --ignored RUST_MIN_STACK=805306368"]
 fn programmable_bootstrap_evaluates_lut() {
     let mut rng = drg(41);
     let key = RnsRlwe::keygen(&mut rng);
