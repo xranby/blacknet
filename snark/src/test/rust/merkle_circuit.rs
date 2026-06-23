@@ -8,7 +8,7 @@
  */
 
 use blacknet_arith::r1cs::ShapedR1cs;
-use blacknet_crypto::symmetric::{JivePoseidon2Pervushin, MerkleTree};
+use blacknet_crypto::symmetric::{MerkleTree, TruncPoseidon2Pervushin};
 use blacknet_snark::programbinding::merkle_circuit::{RANK, assigner::verifies, inclusion_r1cs};
 use blacknet_snark::witnesscommitment::F;
 
@@ -16,7 +16,7 @@ fn f(n: i32) -> F {
     F::from(n)
 }
 
-type Tree = MerkleTree<JivePoseidon2Pervushin>;
+type Tree = MerkleTree<TruncPoseidon2Pervushin>;
 
 fn leaves(n: usize) -> Vec<[F; RANK]> {
     (0..n)

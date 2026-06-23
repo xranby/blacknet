@@ -54,7 +54,7 @@ fn verifier_needs_only_the_root() {
     let small = CommittedTable::commit(&decode_program(&prog()), f(7));
     let big_program: Vec<_> = (0..64).map(|_| Instruction::Halt).collect();
     let big = CommittedTable::commit(&decode_program(&big_program), f(7));
-    // Both roots are a single Jive hash word (4 field elements).
+    // Both roots are a single Trunc hash word (4 field elements).
     assert_eq!(small.root().len(), 4);
     assert_eq!(big.root().len(), 4);
 }

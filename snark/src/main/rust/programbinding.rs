@@ -217,19 +217,19 @@ const _REG_GUARD: () = assert!(REGISTERS <= 256);
 /// now *bound* — a prover cannot substitute a different table without
 /// changing the root, which is fixed by the deployed program. This is the
 /// standard memory-checking-by-commitment upgrade, reusing the tree
-/// (`MerkleTree` over `JivePoseidon2Pervushin`) already in the crypto crate.
+/// (`MerkleTree` over `TruncPoseidon2Pervushin`) already in the crypto crate.
 pub mod committed {
     use super::{Decoded, F, fields, fingerprint};
-    use blacknet_crypto::symmetric::{JivePoseidon2Pervushin, MerkleTree};
+    use blacknet_crypto::symmetric::{MerkleTree, TruncPoseidon2Pervushin};
 
-    /// The Merkle hash type: a Jive digest of four Pervushin elements.
+    /// The Merkle hash type: a Trunc digest of four Pervushin elements.
     pub type Leaf = [F; 4];
     /// A Merkle inclusion branch (sibling hashes root-ward).
     pub type Branch = Vec<Leaf>;
-    type Tree = MerkleTree<JivePoseidon2Pervushin>;
+    type Tree = MerkleTree<TruncPoseidon2Pervushin>;
 
     /// The leaf for program entry `pc`: the fingerprint placed in the first
-    /// slot of the Jive hash word, the rest zero. Distinct fingerprints give
+    /// slot of the Trunc hash word, the rest zero. Distinct fingerprints give
     /// distinct leaves, so leaf equality is fingerprint equality.
     #[must_use]
     pub fn leaf_of(d: &Decoded, alpha: F) -> Leaf {
@@ -314,8 +314,8 @@ pub mod committed {
 /// by the driver. This module arithmetizes the same `compute_root` walk as a
 /// constraint system, so the inclusion proof folds with every other per-step
 /// check rather than being trusted alongside the fold. It is the in-circuit
-/// counterpart of [`committed::verify`], built from the circuit/assigner Jive
-/// pair (`JivePoseidon2Pervushin`, RANK 4) already in the crypto crate — the
+/// counterpart of [`committed::verify`], built from the circuit/assigner Trunc
+/// pair (`TruncPoseidon2Pervushin`, RANK 4) already in the crypto crate — the
 /// last pre-positioned piece this binding needed.
 ///
 /// At each level the index bit `b` (witnessed boolean) selects the hashing
@@ -329,11 +329,11 @@ pub mod merkle_circuit {
     use super::F;
     use blacknet_crypto::algebra::IntegerRing;
     use blacknet_crypto::circuit::builder::{CircuitBuilder, Constant, LinearCombination};
-    use blacknet_crypto::circuit::symmetric::{CompressionFunction, JivePoseidon2Pervushin};
+    use blacknet_crypto::circuit::symmetric::{CompressionFunction, TruncPoseidon2Pervushin};
     use blacknet_crypto::customizableconstraintsystem::CustomizableConstraintSystem;
     use blacknet_crypto::r1cs::R1CS;
 
-    /// Jive hash rank (a 4-element Pervushin word).
+    /// Trunc hash rank (a 4-element Pervushin word).
     pub const RANK: usize = 4;
 
     /// Builds the Merkle-inclusion circuit for a tree of the given `depth`
@@ -358,7 +358,7 @@ pub mod merkle_circuit {
         let circuit = CircuitBuilder::<F>::new(2);
         {
             let scope = circuit.scope("merkle_inclusion");
-            let jive = JivePoseidon2Pervushin::new(&circuit);
+            let trunc = TruncPoseidon2Pervushin::new(&circuit);
             let pow = |i: usize| Constant::new(<F as IntegerRing>::new(1i64 << i));
 
             // Public: leaf, root, pc.
@@ -381,8 +381,8 @@ pub mod merkle_circuit {
                     core::array::from_fn(|_| scope.auxiliary().into());
 
                 // Two candidate parents.
-                let left = jive.compress(&sibling, &hash); // bit == 1
-                let right = jive.compress(&hash, &sibling); // bit == 0
+                let left = trunc.compress(&sibling, &hash); // bit == 1
+                let right = trunc.compress(&hash, &sibling); // bit == 0
 
                 // parent = bit·left + (1−bit)·right, per coordinate. Each
                 // product bit·(left−right) is degree 2; introduce it as an
@@ -422,13 +422,13 @@ pub mod merkle_circuit {
     /// Assigner mirror: fills a satisfying assignment for the inclusion
     /// circuit into the CCS's own `Assigment` (which seeds the constant
     /// column), mirroring the circuit's allocation order exactly — public
-    /// (leaf, root, pc), then per level (bit, siblings, the two Jive
-    /// compressions whose permutation auxiliaries the assigner Jive fills,
+    /// (leaf, root, pc), then per level (bit, siblings, the two Trunc
+    /// compressions whose permutation auxiliaries the assigner Trunc fills,
     /// and the RANK selector products).
     pub mod assigner {
         use super::super::F;
         use super::{RANK, inclusion_ccs};
-        use blacknet_crypto::assigner::symmetric::{CompressionFunction, JivePoseidon2Pervushin};
+        use blacknet_crypto::assigner::symmetric::{CompressionFunction, TruncPoseidon2Pervushin};
         use blacknet_crypto::constraintsystem::ConstraintSystem;
         use blacknet_crypto::matrix::DenseVector;
 
@@ -451,7 +451,7 @@ pub mod merkle_circuit {
             z.extend(root.iter().copied());
             z.push(F::from(pc as u32));
 
-            let jive = JivePoseidon2Pervushin::new(&z);
+            let trunc = TruncPoseidon2Pervushin::new(&z);
             let mut hash = leaf;
             let mut i = pc;
             for sibling in branch {
@@ -460,9 +460,9 @@ pub mod merkle_circuit {
                 z.extend(sibling.iter().copied()); // sibling hash
 
                 // Both compressions, in the circuit's order (each fills the
-                // permutation auxiliaries via the assigner Jive).
-                let left = jive.compress(*sibling, hash);
-                let right = jive.compress(hash, *sibling);
+                // permutation auxiliaries via the assigner Trunc).
+                let left = trunc.compress(*sibling, hash);
+                let right = trunc.compress(hash, *sibling);
                 let mut parent = [F::from(0); RANK];
                 for k in 0..RANK {
                     let sel = if bit == 1 {
